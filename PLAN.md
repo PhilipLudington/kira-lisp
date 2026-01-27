@@ -386,7 +386,7 @@ examples/
 - [x] Tail call optimization
 - [x] Macro system (defmacro, quasiquote)
 - [x] Module/import system (basic - see limitations below)
-- [ ] Source location tracking for errors
+- [x] Source location tracking for errors
 
 ---
 
@@ -438,6 +438,23 @@ The MVP interpreter is fully functional, and the compiler infrastructure (IR, tr
 - Bug 2: HashMap `any` type round-trip for recursive types - **Fixed**
 - Bug 3: Pattern match extraction of `List[RecursiveType]` - **Fixed**
 - Module system features (explicit symbol lists, circular import detection) can now be implemented
+
+**2026-01-27 Update (Source Location Tracking):** Added comprehensive error location tracking:
+- **SourceLoc type**: Tracks line, column, offset, and filename for every token
+- **LocatedToken type**: Pairs tokens with their source location
+- **Updated Lexer**: Tracks line/column as characters are consumed, handles newlines
+- **Updated LispValue**: `LispSymbol` and `LispList` now carry `Option[SourceLoc]`
+- **Updated Error Types**: `ParseResult`, `ParseAllResult`, `EvalResult` include location info
+- **Error Formatting**: New `format_error()` function displays errors with source context:
+  - File:line:column format
+  - The actual source line with line number prefix
+  - A caret (`^`) pointing to the exact error position
+- Example error output:
+  ```
+  test.lisp:2:19: error: Undefined variable: foo
+    2 | (define result (+ foo bar))
+                          ^
+  ```
 
 **Working Features:**
 - Lexer: tokenizes integers, strings, symbols, booleans (#t/#f), parentheses, quotes
