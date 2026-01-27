@@ -640,6 +640,8 @@ effect fn eval_list(first: LispValue, rest: List[LispValue], env: Env) -> EvalRe
             if name == "set!" { return eval_set(rest, env) }
             if name == "and" { return eval_and(rest, env) }
             if name == "or" { return eval_or(rest, env) }
+            if name == "import" { return eval_import(rest, env) }
+            if name == "provide" { return eval_provide(rest, env) }
             // Check if it's a macro call
             match env_lookup(env, name) {
                 Some(LispMacro(_, _, _)) => { return eval_macro_call(name, rest, env) }
@@ -1037,6 +1039,241 @@ effect fn eval_or(args: List[LispValue], env: Env) -> EvalResult {
             }
         }
     }
+}
+
+// ============================================================================
+// Module System: import and provide
+// ============================================================================
+//
+// Supported:
+//   (import "path/to/module.lisp")  - imports all definitions from module
+//   (provide sym1 sym2 ...)          - declares exported symbols
+//
+// Limitations due to Kira bugs with HashMap/any types and recursive types:
+//   - Explicit symbol lists in import not yet supported
+//   - Circular import detection is disabled
+//   - Module exports (provide) are recorded but not enforced during import
+//
+// ============================================================================
+
+// Check if a module has been loaded (tracked via __loaded_modules__ binding)
+// NOTE: Currently unused due to Kira HashMap/any type bugs
+fn is_module_loaded(env: Env, path: string) -> bool {
+    match env_lookup(env, "__loaded_modules__") {
+        Some(LispList(modules)) => {
+            return list_contains_string(modules, path)
+        }
+        _ => { return false }
+    }
+}
+
+// Check if a list of LispValues contains a string
+fn list_contains_string(list: List[LispValue], target: string) -> bool {
+    match list {
+        Nil => { return false }
+        Cons(LispString(s), rest) => {
+            if s == target { return true }
+            return list_contains_string(rest, target)
+        }
+        Cons(_, rest) => { return list_contains_string(rest, target) }
+    }
+}
+
+// Add a module path to the loaded modules list
+fn mark_module_loaded(env: Env, path: string) -> Env {
+    let modules: List[LispValue] = match env_lookup(env, "__loaded_modules__") {
+        Some(LispList(existing)) => { existing }
+        _ => { Nil }
+    }
+    let new_modules: List[LispValue] = Cons(LispString(path), modules)
+    return env_define(env, "__loaded_modules__", LispList(new_modules))
+}
+
+// Get the list of exported symbols from a module environment
+fn get_exports(env: Env) -> Option[List[string]] {
+    match env_lookup(env, "__exports__") {
+        Some(LispList(exports)) => {
+            return Some(extract_symbols(exports))
+        }
+        _ => { return None }
+    }
+}
+
+// Extract symbol names from a list of LispSymbol values
+fn extract_symbols(values: List[LispValue]) -> List[string] {
+    match values {
+        Nil => { return Nil }
+        Cons(LispSymbol(name), rest) => { return Cons(name, extract_symbols(rest)) }
+        Cons(_, rest) => { return extract_symbols(rest) }
+    }
+}
+
+// Check if a name is in a list of strings
+fn name_in_list(name: string, list: List[string]) -> bool {
+    match list {
+        Nil => { return false }
+        Cons(s, rest) => {
+            if s == name { return true }
+            return name_in_list(name, rest)
+        }
+    }
+}
+
+// Helper: recursively import symbols from a list of names
+fn import_names_recursive(target: Env, source: Env, names: List[string]) -> Result[Env, string] {
+    match names {
+        Nil => { return Ok(target) }
+        Cons(name, rest) => {
+            match env_lookup(source, name) {
+                Some(value) => {
+                    let new_target: Env = env_define(target, name, value)
+                    return import_names_recursive(new_target, source, rest)
+                }
+                None => {
+                    return Err("import: symbol not found in module: " + name)
+                }
+            }
+        }
+    }
+}
+
+// Helper: recursively import all non-internal keys
+fn import_keys_recursive(target: Env, source: Env, keys: List[string]) -> Env {
+    match keys {
+        Nil => { return target }
+        Cons(key, rest) => {
+            if std.string.starts_with(key, "__") {
+                // skip internal bindings
+                return import_keys_recursive(target, source, rest)
+            } else {
+                match env_lookup(source, key) {
+                    Some(value) => {
+                        let new_target: Env = env_define(target, key, value)
+                        return import_keys_recursive(new_target, source, rest)
+                    }
+                    None => {
+                        return import_keys_recursive(target, source, rest)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Simple version: import specific symbols by name
+// Uses recursive functions to avoid for-loop issues with HashMap/any types
+fn import_bindings_simple(target: Env, source: Env, only_symbols: Option[List[string]]) -> Result[Env, string] {
+    match only_symbols {
+        Some(requested) => {
+            // Import only requested symbols
+            return import_names_recursive(target, source, requested)
+        }
+        None => {
+            // No explicit list - import all non-internal symbols
+            // Note: exports list check is disabled due to Kira HashMap/any type issues
+            let source_bindings: HashMap = source.bindings
+            let keys: List[string] = std.map.keys(source_bindings)
+            return Ok(import_keys_recursive(target, source, keys))
+        }
+    }
+}
+
+// (import "path.lisp")
+// (import "path.lisp" (sym1 sym2 ...))
+// (import "path.lisp" :as prefix)
+effect fn eval_import(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(LispString(path), rest) => {
+            // Check for circular import
+            if is_module_loaded(env, path) {
+                // Already loaded - just return success
+                return EvalOk(LispNil, env)
+            }
+
+            // Check for optional symbol list argument
+            // NOTE: Due to Kira bug with matching on List[LispValue], we need to
+            // check length first before matching on the content
+            let has_extra_args: bool = match rest {
+                Nil => { false }
+                _ => { true }
+            }
+
+            // For now, import all symbols (explicit symbol lists disabled)
+            let only_symbols: Option[List[string]] = None
+            let env_with_loading: Env = env
+
+            // Read and parse the file
+            match std.fs.read_file(path) {
+                Ok(content) => {
+                    match tokenize(content) {
+                        LexOk(tokens) => {
+                            match parse_all(tokens) {
+                                ParseAllOk(exprs) => {
+                                    // Create fresh environment for module
+                                    let module_env: Env = make_initial_env()
+
+                                    // Evaluate module
+                                    match trampoline(eval_begin_list(exprs, module_env)) {
+                                        EvalOk(_, final_module_env) => {
+                                            // Import bindings from module into caller's env
+                                            match import_bindings_simple(env_with_loading, final_module_env, only_symbols) {
+                                                Ok(new_env) => {
+                                                    return EvalOk(LispNil, new_env)
+                                                }
+                                                Err(msg) => { return EvalErr(msg) }
+                                            }
+                                        }
+                                        EvalErr(msg) => {
+                                            return EvalErr("import: error in module '" + path + "': " + msg)
+                                        }
+                                        TailCall(_, _, _) => {
+                                            return EvalErr("Internal error in import")
+                                        }
+                                    }
+                                }
+                                ParseAllErr(msg) => {
+                                    return EvalErr("import: parse error in '" + path + "': " + msg)
+                                }
+                            }
+                        }
+                        LexErr(msg, pos) => {
+                            return EvalErr("import: lex error in '" + path + "' at " + to_string(pos) + ": " + msg)
+                        }
+                    }
+                }
+                Err(msg) => {
+                    return EvalErr("import: cannot read file '" + path + "': " + msg)
+                }
+            }
+        }
+        _ => {
+            return EvalErr("import: expected string path - (import \"path.lisp\" [(symbols...)])")
+        }
+    }
+}
+
+// (provide sym1 sym2 ...)
+// Declares which symbols this module exports
+fn eval_provide(args: List[LispValue], env: Env) -> EvalResult {
+    // Build list of exported symbol names
+    var exports: List[LispValue] = match env_lookup(env, "__exports__") {
+        Some(LispList(existing)) => { existing }
+        _ => { Nil }
+    }
+
+    for arg in args {
+        match arg {
+            LispSymbol(name) => {
+                exports = Cons(LispSymbol(name), exports)
+            }
+            _ => {
+                return EvalErr("provide: expected symbols, got " + lisp_to_string(arg))
+            }
+        }
+    }
+
+    let new_env: Env = env_define(env, "__exports__", LispList(exports))
+    return EvalOk(LispNil, new_env)
 }
 
 effect fn eval_application(op_expr: LispValue, args: List[LispValue], env: Env) -> EvalResult {
