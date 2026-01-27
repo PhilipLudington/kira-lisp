@@ -1917,428 +1917,368 @@ fn collect_definitions(ir_exprs: List[IRExpr]) -> (List[(string, IRExpr)], List[
 
 // Generate the runtime library
 fn generate_runtime() -> string {
+    return "// Lisp Runtime Library (generated)
+
+type LispValue =
+    | LispNil
+    | LispBool(bool)
+    | LispInt(i64)
+    | LispFloat(f64)
+    | LispString(string)
+    | LispSymbol(string)
+    | LispList(List[LispValue])
+
+fn is_truthy(v: LispValue) -> bool {
+    match v { LispBool(b) => { return b } _ => { return true } }
+}
+
+fn lisp_to_string(v: LispValue) -> string {
+    match v {
+        LispNil => { return \"()\" }
+        LispBool(b) => { if b { return \"#t\" } else { return \"#f\" } }
+        LispInt(n) => { return to_string(n) }
+        LispFloat(n) => { return to_string(n) }
+        LispString(s) => { return \"\\\"\" + s + \"\\\"\" }
+        LispSymbol(s) => { return s }
+        LispList(items) => {
+            var sb: StringBuilder = std.builder.new()
+            sb = std.builder.append(sb, \"(\")
+            var first: bool = true
+            for item in items {
+                if not first { sb = std.builder.append(sb, \" \") }
+                sb = std.builder.append(sb, lisp_to_string(item))
+                first = false
+            }
+            sb = std.builder.append(sb, \")\")
+            return std.builder.build(sb)
+        }
+    }
+}
+
+fn rt_add(args: List[LispValue]) -> LispValue {
+    var sum: i64 = 0i64
+    for arg in args {
+        match arg {
+            LispInt(n) => { sum = sum + n }
+            _ => { return LispNil }
+        }
+    }
+    return LispInt(sum)
+}
+
+fn rt_sub(args: List[LispValue]) -> LispValue {
+    match args {
+        Nil => { return LispNil }
+        Cons(LispInt(first), rest) => {
+            match rest {
+                Nil => { return LispInt(0i64 - first) }
+                _ => {
+                    var result: i64 = first
+                    for arg in rest {
+                        match arg {
+                            LispInt(n) => { result = result - n }
+                            _ => { return LispNil }
+                        }
+                    }
+                    return LispInt(result)
+                }
+            }
+        }
+        _ => { return LispNil }
+    }
+}
+
+fn rt_mul(args: List[LispValue]) -> LispValue {
+    var prod: i64 = 1i64
+    for arg in args {
+        match arg {
+            LispInt(n) => { prod = prod * n }
+            _ => { return LispNil }
+        }
+    }
+    return LispInt(prod)
+}
+
+fn rt_div(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispInt(a), Cons(LispInt(b), Nil)) => {
+            if b == 0i64 { return LispNil }
+            return LispInt(a / b)
+        }
+        _ => { return LispNil }
+    }
+}
+
+fn rt_mod(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispInt(a), Cons(LispInt(b), Nil)) => {
+            if b == 0i64 { return LispNil }
+            return LispInt(a % b)
+        }
+        _ => { return LispNil }
+    }
+}
+
+fn rt_num_eq(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { return LispBool(a == b) }
+        _ => { return LispBool(false) }
+    }
+}
+
+fn rt_lt(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { return LispBool(a < b) }
+        _ => { return LispBool(false) }
+    }
+}
+
+fn rt_gt(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { return LispBool(a > b) }
+        _ => { return LispBool(false) }
+    }
+}
+
+fn rt_le(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { return LispBool(a <= b) }
+        _ => { return LispBool(false) }
+    }
+}
+
+fn rt_ge(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { return LispBool(a >= b) }
+        _ => { return LispBool(false) }
+    }
+}
+
+fn rt_cons(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(head, Cons(LispList(tail), Nil)) => { return LispList(Cons(head, tail)) }
+        Cons(head, Cons(LispNil, Nil)) => { return LispList(Cons(head, Nil)) }
+        _ => { return LispNil }
+    }
+}
+
+fn rt_car(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispList(Cons(head, _)), Nil) => { return head }
+        _ => { return LispNil }
+    }
+}
+
+fn rt_cdr(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispList(Cons(_, tail)), Nil) => { return LispList(tail) }
+        _ => { return LispNil }
+    }
+}
+
+fn rt_null_p(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispList(Nil), Nil) => { return LispBool(true) }
+        Cons(LispNil, Nil) => { return LispBool(true) }
+        Cons(_, Nil) => { return LispBool(false) }
+        _ => { return LispBool(false) }
+    }
+}
+
+fn rt_pair_p(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispList(Cons(_, _)), Nil) => { return LispBool(true) }
+        Cons(_, Nil) => { return LispBool(false) }
+        _ => { return LispBool(false) }
+    }
+}
+
+fn rt_length(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispList(items), Nil) => { return LispInt(std.list.length(items)) }
+        Cons(LispNil, Nil) => { return LispInt(0i64) }
+        _ => { return LispNil }
+    }
+}
+
+fn rt_not(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(v, Nil) => { return LispBool(not is_truthy(v)) }
+        _ => { return LispNil }
+    }
+}
+
+fn rt_eq_p(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(a, Cons(b, Nil)) => {
+            match (a, b) {
+                (LispNil, LispNil) => { return LispBool(true) }
+                (LispBool(x), LispBool(y)) => { return LispBool(x == y) }
+                (LispInt(x), LispInt(y)) => { return LispBool(x == y) }
+                (LispSymbol(x), LispSymbol(y)) => { return LispBool(x == y) }
+                (LispString(x), LispString(y)) => { return LispBool(x == y) }
+                _ => { return LispBool(false) }
+            }
+        }
+        _ => { return LispBool(false) }
+    }
+}
+
+fn lists_equal_rt(xs: List[LispValue], ys: List[LispValue]) -> bool {
+    match (xs, ys) {
+        (Nil, Nil) => { return true }
+        (Cons(x, xr), Cons(y, yr)) => {
+            if not values_equal_rt(x, y) { return false }
+            return lists_equal_rt(xr, yr)
+        }
+        _ => { return false }
+    }
+}
+
+fn values_equal_rt(a: LispValue, b: LispValue) -> bool {
+    match (a, b) {
+        (LispNil, LispNil) => { return true }
+        (LispBool(x), LispBool(y)) => { return x == y }
+        (LispInt(x), LispInt(y)) => { return x == y }
+        (LispFloat(x), LispFloat(y)) => { return x == y }
+        (LispSymbol(x), LispSymbol(y)) => { return x == y }
+        (LispString(x), LispString(y)) => { return x == y }
+        (LispList(xs), LispList(ys)) => { return lists_equal_rt(xs, ys) }
+        _ => { return false }
+    }
+}
+
+fn rt_equal_p(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(a, Cons(b, Nil)) => { return LispBool(values_equal_rt(a, b)) }
+        _ => { return LispBool(false) }
+    }
+}
+
+fn rt_number_p(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispInt(_), Nil) => { return LispBool(true) }
+        Cons(LispFloat(_), Nil) => { return LispBool(true) }
+        Cons(_, Nil) => { return LispBool(false) }
+        _ => { return LispBool(false) }
+    }
+}
+
+fn rt_string_p(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispString(_), Nil) => { return LispBool(true) }
+        Cons(_, Nil) => { return LispBool(false) }
+        _ => { return LispBool(false) }
+    }
+}
+
+fn rt_symbol_p(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispSymbol(_), Nil) => { return LispBool(true) }
+        Cons(_, Nil) => { return LispBool(false) }
+        _ => { return LispBool(false) }
+    }
+}
+
+fn rt_procedure_p(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(_, Nil) => { return LispBool(false) }
+        _ => { return LispBool(false) }
+    }
+}
+
+fn rt_boolean_p(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispBool(_), Nil) => { return LispBool(true) }
+        Cons(_, Nil) => { return LispBool(false) }
+        _ => { return LispBool(false) }
+    }
+}
+
+fn rt_string_append(args: List[LispValue]) -> LispValue {
     var sb: StringBuilder = std.builder.new()
-    let nl: string = "\n"
+    for arg in args {
+        match arg {
+            LispString(s) => { sb = std.builder.append(sb, s) }
+            _ => { return LispNil }
+        }
+    }
+    return LispString(std.builder.build(sb))
+}
 
-    // Header
-    sb = std.builder.append(sb, "// Lisp Runtime Library (generated)" + nl)
-    sb = std.builder.append(sb, nl)
+fn rt_string_length(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispString(s), Nil) => { return LispInt(std.string.length(s)) }
+        _ => { return LispNil }
+    }
+}
 
-    // LispValue type
-    sb = std.builder.append(sb, "type LispValue =" + nl)
-    sb = std.builder.append(sb, "    | LispNil" + nl)
-    sb = std.builder.append(sb, "    | LispBool(bool)" + nl)
-    sb = std.builder.append(sb, "    | LispInt(i64)" + nl)
-    sb = std.builder.append(sb, "    | LispFloat(f64)" + nl)
-    sb = std.builder.append(sb, "    | LispString(string)" + nl)
-    sb = std.builder.append(sb, "    | LispSymbol(string)" + nl)
-    sb = std.builder.append(sb, "    | LispList(List[LispValue])" + nl)
-    sb = std.builder.append(sb, nl)
+fn rt_number_to_string(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispInt(n), Nil) => { return LispString(to_string(n)) }
+        Cons(LispFloat(n), Nil) => { return LispString(to_string(n)) }
+        _ => { return LispNil }
+    }
+}
 
-    // is_truthy
-    sb = std.builder.append(sb, "fn is_truthy(v: LispValue) -> bool {" + nl)
-    sb = std.builder.append(sb, "    match v { LispBool(b) => { return b } _ => { return true } }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
+fn rt_string_to_number(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispString(s), Nil) => {
+            match std.string.parse_int(s) {
+                Some(n) => { return LispInt(n) }
+                None => {
+                    match std.string.parse_float(s) {
+                        Some(f) => { return LispFloat(f) }
+                        None => { return LispBool(false) }
+                    }
+                }
+            }
+        }
+        _ => { return LispNil }
+    }
+}
 
-    // lisp_to_string
-    sb = std.builder.append(sb, "fn lisp_to_string(v: LispValue) -> string {" + nl)
-    sb = std.builder.append(sb, "    match v {" + nl)
-    sb = std.builder.append(sb, "        LispNil => { return \"()\" }" + nl)
-    sb = std.builder.append(sb, "        LispBool(b) => { if b { return \"#t\" } else { return \"#f\" } }" + nl)
-    sb = std.builder.append(sb, "        LispInt(n) => { return to_string(n) }" + nl)
-    sb = std.builder.append(sb, "        LispFloat(n) => { return to_string(n) }" + nl)
-    sb = std.builder.append(sb, "        LispString(s) => { return \"\\\"\" + s + \"\\\"\" }" + nl)
-    sb = std.builder.append(sb, "        LispSymbol(s) => { return s }" + nl)
-    sb = std.builder.append(sb, "        LispList(items) => {" + nl)
-    sb = std.builder.append(sb, "            var sb: StringBuilder = std.builder.new()" + nl)
-    sb = std.builder.append(sb, "            sb = std.builder.append(sb, \"(\")" + nl)
-    sb = std.builder.append(sb, "            var first: bool = true" + nl)
-    sb = std.builder.append(sb, "            for item in items {" + nl)
-    sb = std.builder.append(sb, "                if not first { sb = std.builder.append(sb, \" \") }" + nl)
-    sb = std.builder.append(sb, "                sb = std.builder.append(sb, lisp_to_string(item))" + nl)
-    sb = std.builder.append(sb, "                first = false" + nl)
-    sb = std.builder.append(sb, "            }" + nl)
-    sb = std.builder.append(sb, "            sb = std.builder.append(sb, \")\")" + nl)
-    sb = std.builder.append(sb, "            return std.builder.build(sb)" + nl)
-    sb = std.builder.append(sb, "        }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
+fn rt_abs(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispInt(n), Nil) => { if n < 0i64 { return LispInt(0i64 - n) } else { return LispInt(n) } }
+        Cons(LispFloat(n), Nil) => { if n < 0.0 { return LispFloat(0.0 - n) } else { return LispFloat(n) } }
+        _ => { return LispNil }
+    }
+}
 
-    // Arithmetic: rt_add
-    sb = std.builder.append(sb, "fn rt_add(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    var sum: i64 = 0i64" + nl)
-    sb = std.builder.append(sb, "    for arg in args {" + nl)
-    sb = std.builder.append(sb, "        match arg {" + nl)
-    sb = std.builder.append(sb, "            LispInt(n) => { sum = sum + n }" + nl)
-    sb = std.builder.append(sb, "            _ => { return LispNil }" + nl)
-    sb = std.builder.append(sb, "        }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "    return LispInt(sum)" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
+fn rt_min(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { if a < b { return LispInt(a) } else { return LispInt(b) } }
+        _ => { return LispNil }
+    }
+}
 
-    // rt_sub
-    sb = std.builder.append(sb, "fn rt_sub(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    match args {" + nl)
-    sb = std.builder.append(sb, "        Nil => { return LispNil }" + nl)
-    sb = std.builder.append(sb, "        Cons(LispInt(first), rest) => {" + nl)
-    sb = std.builder.append(sb, "            match rest {" + nl)
-    sb = std.builder.append(sb, "                Nil => { return LispInt(0i64 - first) }" + nl)
-    sb = std.builder.append(sb, "                _ => {" + nl)
-    sb = std.builder.append(sb, "                    var result: i64 = first" + nl)
-    sb = std.builder.append(sb, "                    for arg in rest {" + nl)
-    sb = std.builder.append(sb, "                        match arg {" + nl)
-    sb = std.builder.append(sb, "                            LispInt(n) => { result = result - n }" + nl)
-    sb = std.builder.append(sb, "                            _ => { return LispNil }" + nl)
-    sb = std.builder.append(sb, "                        }" + nl)
-    sb = std.builder.append(sb, "                    }" + nl)
-    sb = std.builder.append(sb, "                    return LispInt(result)" + nl)
-    sb = std.builder.append(sb, "                }" + nl)
-    sb = std.builder.append(sb, "            }" + nl)
-    sb = std.builder.append(sb, "        }" + nl)
-    sb = std.builder.append(sb, "        _ => { return LispNil }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
+fn rt_max(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { if a > b { return LispInt(a) } else { return LispInt(b) } }
+        _ => { return LispNil }
+    }
+}
 
-    // rt_mul
-    sb = std.builder.append(sb, "fn rt_mul(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    var prod: i64 = 1i64" + nl)
-    sb = std.builder.append(sb, "    for arg in args {" + nl)
-    sb = std.builder.append(sb, "        match arg {" + nl)
-    sb = std.builder.append(sb, "            LispInt(n) => { prod = prod * n }" + nl)
-    sb = std.builder.append(sb, "            _ => { return LispNil }" + nl)
-    sb = std.builder.append(sb, "        }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "    return LispInt(prod)" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
+effect fn rt_display(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(v, Nil) => {
+            match v {
+                LispString(s) => { std.io.print(s) }
+                _ => { std.io.print(lisp_to_string(v)) }
+            }
+            return LispNil
+        }
+        _ => { return LispNil }
+    }
+}
 
-    // rt_div
-    sb = std.builder.append(sb, "fn rt_div(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    match args {" + nl)
-    sb = std.builder.append(sb, "        Cons(LispInt(a), Cons(LispInt(b), Nil)) => {" + nl)
-    sb = std.builder.append(sb, "            if b == 0i64 { return LispNil }" + nl)
-    sb = std.builder.append(sb, "            return LispInt(a / b)" + nl)
-    sb = std.builder.append(sb, "        }" + nl)
-    sb = std.builder.append(sb, "        _ => { return LispNil }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
+effect fn rt_newline() -> LispValue {
+    std.io.println(\"\")
+    return LispNil
+}
 
-    // rt_mod
-    sb = std.builder.append(sb, "fn rt_mod(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    match args {" + nl)
-    sb = std.builder.append(sb, "        Cons(LispInt(a), Cons(LispInt(b), Nil)) => {" + nl)
-    sb = std.builder.append(sb, "            if b == 0i64 { return LispNil }" + nl)
-    sb = std.builder.append(sb, "            return LispInt(a % b)" + nl)
-    sb = std.builder.append(sb, "        }" + nl)
-    sb = std.builder.append(sb, "        _ => { return LispNil }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
-
-    // Comparison functions
-    sb = std.builder.append(sb, "fn rt_num_eq(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    match args {" + nl)
-    sb = std.builder.append(sb, "        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { return LispBool(a == b) }" + nl)
-    sb = std.builder.append(sb, "        _ => { return LispBool(false) }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
-
-    sb = std.builder.append(sb, "fn rt_lt(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    match args {" + nl)
-    sb = std.builder.append(sb, "        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { return LispBool(a < b) }" + nl)
-    sb = std.builder.append(sb, "        _ => { return LispBool(false) }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
-
-    sb = std.builder.append(sb, "fn rt_gt(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    match args {" + nl)
-    sb = std.builder.append(sb, "        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { return LispBool(a > b) }" + nl)
-    sb = std.builder.append(sb, "        _ => { return LispBool(false) }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
-
-    sb = std.builder.append(sb, "fn rt_le(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    match args {" + nl)
-    sb = std.builder.append(sb, "        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { return LispBool(a <= b) }" + nl)
-    sb = std.builder.append(sb, "        _ => { return LispBool(false) }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
-
-    sb = std.builder.append(sb, "fn rt_ge(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    match args {" + nl)
-    sb = std.builder.append(sb, "        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { return LispBool(a >= b) }" + nl)
-    sb = std.builder.append(sb, "        _ => { return LispBool(false) }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
-
-    // List operations
-    sb = std.builder.append(sb, "fn rt_cons(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    match args {" + nl)
-    sb = std.builder.append(sb, "        Cons(head, Cons(LispList(tail), Nil)) => { return LispList(Cons(head, tail)) }" + nl)
-    sb = std.builder.append(sb, "        Cons(head, Cons(LispNil, Nil)) => { return LispList(Cons(head, Nil)) }" + nl)
-    sb = std.builder.append(sb, "        _ => { return LispNil }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
-
-    sb = std.builder.append(sb, "fn rt_car(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    match args {" + nl)
-    sb = std.builder.append(sb, "        Cons(LispList(Cons(head, _)), Nil) => { return head }" + nl)
-    sb = std.builder.append(sb, "        _ => { return LispNil }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
-
-    sb = std.builder.append(sb, "fn rt_cdr(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    match args {" + nl)
-    sb = std.builder.append(sb, "        Cons(LispList(Cons(_, tail)), Nil) => { return LispList(tail) }" + nl)
-    sb = std.builder.append(sb, "        _ => { return LispNil }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
-
-    sb = std.builder.append(sb, "fn rt_null_p(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    match args {" + nl)
-    sb = std.builder.append(sb, "        Cons(LispList(Nil), Nil) => { return LispBool(true) }" + nl)
-    sb = std.builder.append(sb, "        Cons(LispNil, Nil) => { return LispBool(true) }" + nl)
-    sb = std.builder.append(sb, "        Cons(_, Nil) => { return LispBool(false) }" + nl)
-    sb = std.builder.append(sb, "        _ => { return LispBool(false) }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
-
-    sb = std.builder.append(sb, "fn rt_pair_p(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    match args {" + nl)
-    sb = std.builder.append(sb, "        Cons(LispList(Cons(_, _)), Nil) => { return LispBool(true) }" + nl)
-    sb = std.builder.append(sb, "        Cons(_, Nil) => { return LispBool(false) }" + nl)
-    sb = std.builder.append(sb, "        _ => { return LispBool(false) }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
-
-    sb = std.builder.append(sb, "fn rt_length(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    match args {" + nl)
-    sb = std.builder.append(sb, "        Cons(LispList(items), Nil) => { return LispInt(std.list.length(items)) }" + nl)
-    sb = std.builder.append(sb, "        Cons(LispNil, Nil) => { return LispInt(0i64) }" + nl)
-    sb = std.builder.append(sb, "        _ => { return LispNil }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
-
-    // Boolean
-    sb = std.builder.append(sb, "fn rt_not(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    match args {" + nl)
-    sb = std.builder.append(sb, "        Cons(v, Nil) => { return LispBool(not is_truthy(v)) }" + nl)
-    sb = std.builder.append(sb, "        _ => { return LispNil }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
-
-    // Equality
-    sb = std.builder.append(sb, "fn rt_eq_p(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    match args {" + nl)
-    sb = std.builder.append(sb, "        Cons(a, Cons(b, Nil)) => {" + nl)
-    sb = std.builder.append(sb, "            match (a, b) {" + nl)
-    sb = std.builder.append(sb, "                (LispNil, LispNil) => { return LispBool(true) }" + nl)
-    sb = std.builder.append(sb, "                (LispBool(x), LispBool(y)) => { return LispBool(x == y) }" + nl)
-    sb = std.builder.append(sb, "                (LispInt(x), LispInt(y)) => { return LispBool(x == y) }" + nl)
-    sb = std.builder.append(sb, "                (LispSymbol(x), LispSymbol(y)) => { return LispBool(x == y) }" + nl)
-    sb = std.builder.append(sb, "                (LispString(x), LispString(y)) => { return LispBool(x == y) }" + nl)
-    sb = std.builder.append(sb, "                _ => { return LispBool(false) }" + nl)
-    sb = std.builder.append(sb, "            }" + nl)
-    sb = std.builder.append(sb, "        }" + nl)
-    sb = std.builder.append(sb, "        _ => { return LispBool(false) }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
-
-    // Deep equality
-    sb = std.builder.append(sb, "fn lists_equal_rt(xs: List[LispValue], ys: List[LispValue]) -> bool {" + nl)
-    sb = std.builder.append(sb, "    match (xs, ys) {" + nl)
-    sb = std.builder.append(sb, "        (Nil, Nil) => { return true }" + nl)
-    sb = std.builder.append(sb, "        (Cons(x, xr), Cons(y, yr)) => {" + nl)
-    sb = std.builder.append(sb, "            if not values_equal_rt(x, y) { return false }" + nl)
-    sb = std.builder.append(sb, "            return lists_equal_rt(xr, yr)" + nl)
-    sb = std.builder.append(sb, "        }" + nl)
-    sb = std.builder.append(sb, "        _ => { return false }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
-
-    sb = std.builder.append(sb, "fn values_equal_rt(a: LispValue, b: LispValue) -> bool {" + nl)
-    sb = std.builder.append(sb, "    match (a, b) {" + nl)
-    sb = std.builder.append(sb, "        (LispNil, LispNil) => { return true }" + nl)
-    sb = std.builder.append(sb, "        (LispBool(x), LispBool(y)) => { return x == y }" + nl)
-    sb = std.builder.append(sb, "        (LispInt(x), LispInt(y)) => { return x == y }" + nl)
-    sb = std.builder.append(sb, "        (LispFloat(x), LispFloat(y)) => { return x == y }" + nl)
-    sb = std.builder.append(sb, "        (LispSymbol(x), LispSymbol(y)) => { return x == y }" + nl)
-    sb = std.builder.append(sb, "        (LispString(x), LispString(y)) => { return x == y }" + nl)
-    sb = std.builder.append(sb, "        (LispList(xs), LispList(ys)) => { return lists_equal_rt(xs, ys) }" + nl)
-    sb = std.builder.append(sb, "        _ => { return false }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
-
-    sb = std.builder.append(sb, "fn rt_equal_p(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    match args {" + nl)
-    sb = std.builder.append(sb, "        Cons(a, Cons(b, Nil)) => { return LispBool(values_equal_rt(a, b)) }" + nl)
-    sb = std.builder.append(sb, "        _ => { return LispBool(false) }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
-
-    // Type predicates
-    sb = std.builder.append(sb, "fn rt_number_p(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    match args {" + nl)
-    sb = std.builder.append(sb, "        Cons(LispInt(_), Nil) => { return LispBool(true) }" + nl)
-    sb = std.builder.append(sb, "        Cons(LispFloat(_), Nil) => { return LispBool(true) }" + nl)
-    sb = std.builder.append(sb, "        Cons(_, Nil) => { return LispBool(false) }" + nl)
-    sb = std.builder.append(sb, "        _ => { return LispBool(false) }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
-
-    sb = std.builder.append(sb, "fn rt_string_p(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    match args {" + nl)
-    sb = std.builder.append(sb, "        Cons(LispString(_), Nil) => { return LispBool(true) }" + nl)
-    sb = std.builder.append(sb, "        Cons(_, Nil) => { return LispBool(false) }" + nl)
-    sb = std.builder.append(sb, "        _ => { return LispBool(false) }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
-
-    sb = std.builder.append(sb, "fn rt_symbol_p(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    match args {" + nl)
-    sb = std.builder.append(sb, "        Cons(LispSymbol(_), Nil) => { return LispBool(true) }" + nl)
-    sb = std.builder.append(sb, "        Cons(_, Nil) => { return LispBool(false) }" + nl)
-    sb = std.builder.append(sb, "        _ => { return LispBool(false) }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
-
-    sb = std.builder.append(sb, "fn rt_procedure_p(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    match args {" + nl)
-    sb = std.builder.append(sb, "        Cons(_, Nil) => { return LispBool(false) }" + nl)
-    sb = std.builder.append(sb, "        _ => { return LispBool(false) }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
-
-    sb = std.builder.append(sb, "fn rt_boolean_p(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    match args {" + nl)
-    sb = std.builder.append(sb, "        Cons(LispBool(_), Nil) => { return LispBool(true) }" + nl)
-    sb = std.builder.append(sb, "        Cons(_, Nil) => { return LispBool(false) }" + nl)
-    sb = std.builder.append(sb, "        _ => { return LispBool(false) }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
-
-    // String operations
-    sb = std.builder.append(sb, "fn rt_string_append(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    var sb: StringBuilder = std.builder.new()" + nl)
-    sb = std.builder.append(sb, "    for arg in args {" + nl)
-    sb = std.builder.append(sb, "        match arg {" + nl)
-    sb = std.builder.append(sb, "            LispString(s) => { sb = std.builder.append(sb, s) }" + nl)
-    sb = std.builder.append(sb, "            _ => { return LispNil }" + nl)
-    sb = std.builder.append(sb, "        }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "    return LispString(std.builder.build(sb))" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
-
-    sb = std.builder.append(sb, "fn rt_string_length(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    match args {" + nl)
-    sb = std.builder.append(sb, "        Cons(LispString(s), Nil) => { return LispInt(std.string.length(s)) }" + nl)
-    sb = std.builder.append(sb, "        _ => { return LispNil }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
-
-    sb = std.builder.append(sb, "fn rt_number_to_string(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    match args {" + nl)
-    sb = std.builder.append(sb, "        Cons(LispInt(n), Nil) => { return LispString(to_string(n)) }" + nl)
-    sb = std.builder.append(sb, "        Cons(LispFloat(n), Nil) => { return LispString(to_string(n)) }" + nl)
-    sb = std.builder.append(sb, "        _ => { return LispNil }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
-
-    sb = std.builder.append(sb, "fn rt_string_to_number(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    match args {" + nl)
-    sb = std.builder.append(sb, "        Cons(LispString(s), Nil) => {" + nl)
-    sb = std.builder.append(sb, "            match std.string.parse_int(s) {" + nl)
-    sb = std.builder.append(sb, "                Some(n) => { return LispInt(n) }" + nl)
-    sb = std.builder.append(sb, "                None => {" + nl)
-    sb = std.builder.append(sb, "                    match std.string.parse_float(s) {" + nl)
-    sb = std.builder.append(sb, "                        Some(f) => { return LispFloat(f) }" + nl)
-    sb = std.builder.append(sb, "                        None => { return LispBool(false) }" + nl)
-    sb = std.builder.append(sb, "                    }" + nl)
-    sb = std.builder.append(sb, "                }" + nl)
-    sb = std.builder.append(sb, "            }" + nl)
-    sb = std.builder.append(sb, "        }" + nl)
-    sb = std.builder.append(sb, "        _ => { return LispNil }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
-
-    // Math
-    sb = std.builder.append(sb, "fn rt_abs(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    match args {" + nl)
-    sb = std.builder.append(sb, "        Cons(LispInt(n), Nil) => { if n < 0i64 { return LispInt(0i64 - n) } else { return LispInt(n) } }" + nl)
-    sb = std.builder.append(sb, "        Cons(LispFloat(n), Nil) => { if n < 0.0 { return LispFloat(0.0 - n) } else { return LispFloat(n) } }" + nl)
-    sb = std.builder.append(sb, "        _ => { return LispNil }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
-
-    sb = std.builder.append(sb, "fn rt_min(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    match args {" + nl)
-    sb = std.builder.append(sb, "        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { if a < b { return LispInt(a) } else { return LispInt(b) } }" + nl)
-    sb = std.builder.append(sb, "        _ => { return LispNil }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
-
-    sb = std.builder.append(sb, "fn rt_max(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    match args {" + nl)
-    sb = std.builder.append(sb, "        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { if a > b { return LispInt(a) } else { return LispInt(b) } }" + nl)
-    sb = std.builder.append(sb, "        _ => { return LispNil }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
-
-    // I/O
-    sb = std.builder.append(sb, "effect fn rt_display(args: List[LispValue]) -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    match args {" + nl)
-    sb = std.builder.append(sb, "        Cons(v, Nil) => {" + nl)
-    sb = std.builder.append(sb, "            match v {" + nl)
-    sb = std.builder.append(sb, "                LispString(s) => { std.io.print(s) }" + nl)
-    sb = std.builder.append(sb, "                _ => { std.io.print(lisp_to_string(v)) }" + nl)
-    sb = std.builder.append(sb, "            }" + nl)
-    sb = std.builder.append(sb, "            return LispNil" + nl)
-    sb = std.builder.append(sb, "        }" + nl)
-    sb = std.builder.append(sb, "        _ => { return LispNil }" + nl)
-    sb = std.builder.append(sb, "    }" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
-
-    sb = std.builder.append(sb, "effect fn rt_newline() -> LispValue {" + nl)
-    sb = std.builder.append(sb, "    std.io.println(\"\")" + nl)
-    sb = std.builder.append(sb, "    return LispNil" + nl)
-    sb = std.builder.append(sb, "}" + nl)
-    sb = std.builder.append(sb, nl)
-
-    return std.builder.build(sb)
+"
 }
 
 // Generate compiled Kira program
