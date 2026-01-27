@@ -1,0 +1,41 @@
+// Lisp Compiler - Instructions
+//
+// Since Kira doesn't have command-line argument support or a module system,
+// the compiler is integrated into src/main.ki.
+//
+// To compile a Lisp file to Kira:
+//
+// 1. Edit src/main.ki
+// 2. In the main() function, comment out the REPL code
+// 3. Uncomment and modify the compile_file line with your file paths
+// 4. Run: kira run src/main.ki
+//
+// Example in main.ki:
+//
+//     effect fn main() -> void {
+//         // Comment out REPL:
+//         // std.io.println("Kira Lisp Interpreter")
+//         // ...
+//         // repl_loop(env)
+//
+//         // Uncomment and set your paths:
+//         compile_file("examples/factorial.lisp", "examples/factorial_compiled.ki")
+//     }
+//
+// Then run: kira run src/main.ki
+// And then: kira run examples/factorial_compiled.ki
+
+effect fn main() -> void {
+    std.io.println("Lisp Compiler Instructions")
+    std.io.println("")
+    std.io.println("The compiler is integrated into src/main.ki")
+    std.io.println("")
+    std.io.println("To compile a Lisp file:")
+    std.io.println("1. Edit src/main.ki")
+    std.io.println("2. Comment out the REPL code in main()")
+    std.io.println("3. Uncomment: compile_file(\"your_file.lisp\", \"output.ki\")")
+    std.io.println("4. Run: kira run src/main.ki")
+    std.io.println("")
+    std.io.println("Example files:")
+    std.io.println("  examples/factorial.lisp -> examples/factorial_compiled.ki")
+}

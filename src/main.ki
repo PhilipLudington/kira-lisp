@@ -483,16 +483,22 @@ fn lisp_to_string(v: LispValue) -> string {
         LispString(s) => { return "\"" + s + "\"" }
         LispSymbol(s) => { return s }
         LispList(items) => {
-            var sb: StringBuilder = std.builder.new()
-            sb = std.builder.append(sb, "(")
-            var first: bool = true
-            for item in items {
-                if not first { sb = std.builder.append(sb, " ") }
-                sb = std.builder.append(sb, lisp_to_string(item))
-                first = false
+            // Workaround for Kira bug: for loop on empty List[RecursiveType] crashes
+            match items {
+                Nil => { return "()" }
+                _ => {
+                    var sb: StringBuilder = std.builder.new()
+                    sb = std.builder.append(sb, "(")
+                    var first: bool = true
+                    for item in items {
+                        if not first { sb = std.builder.append(sb, " ") }
+                        sb = std.builder.append(sb, lisp_to_string(item))
+                        first = false
+                    }
+                    sb = std.builder.append(sb, ")")
+                    return std.builder.build(sb)
+                }
             }
-            sb = std.builder.append(sb, ")")
-            return std.builder.build(sb)
         }
         LispLambda(params, _, _) => {
             var sb: StringBuilder = std.builder.new()
@@ -514,7 +520,7 @@ fn is_truthy(v: LispValue) -> bool {
     match v { LispBool(b) => { return b } _ => { return true } }
 }
 
-fn eval(expr: LispValue, env: Env) -> EvalResult {
+effect fn eval(expr: LispValue, env: Env) -> EvalResult {
     match expr {
         LispNil => { return EvalOk(LispNil, env) }
         LispBool(b) => { return EvalOk(LispBool(b), env) }
@@ -538,7 +544,7 @@ fn eval(expr: LispValue, env: Env) -> EvalResult {
     }
 }
 
-fn eval_list(first: LispValue, rest: List[LispValue], env: Env) -> EvalResult {
+effect fn eval_list(first: LispValue, rest: List[LispValue], env: Env) -> EvalResult {
     match first {
         LispSymbol(name) => {
             if name == "quote" { return eval_quote(rest, env) }
@@ -617,14 +623,20 @@ fn eval_define(args: List[LispValue], env: Env) -> EvalResult {
 }
 
 fn extract_param_names(params: List[LispValue]) -> Result[List[string], string] {
-    var names: List[string] = Nil
-    for p in params {
-        match p {
-            LispSymbol(name) => { names = Cons(name, names) }
-            _ => { return Err("Parameter must be a symbol") }
+    // Workaround for Kira bug: for loop on empty List[RecursiveType] crashes
+    match params {
+        Nil => { return Ok(Nil) }
+        _ => {
+            var names: List[string] = Nil
+            for p in params {
+                match p {
+                    LispSymbol(name) => { names = Cons(name, names) }
+                    _ => { return Err("Parameter must be a symbol") }
+                }
+            }
+            return Ok(std.list.reverse(names))
         }
     }
-    return Ok(std.list.reverse(names))
 }
 
 fn make_begin(body: List[LispValue]) -> LispValue {
@@ -653,15 +665,21 @@ fn eval_let(args: List[LispValue], env: Env) -> EvalResult {
     match args {
         Cons(LispList(bindings), body) => {
             var let_env: Env = env_extend(env)
-            for binding in bindings {
-                match binding {
-                    LispList(Cons(LispSymbol(name), Cons(value_expr, Nil))) => {
-                        match eval(value_expr, env) {
-                            EvalOk(value, _) => { let_env = env_define(let_env, name, value) }
-                            EvalErr(msg) => { return EvalErr(msg) }
+            // Workaround for Kira bug: for loop on empty List[RecursiveType] crashes
+            match bindings {
+                Nil => { }
+                _ => {
+                    for binding in bindings {
+                        match binding {
+                            LispList(Cons(LispSymbol(name), Cons(value_expr, Nil))) => {
+                                match eval(value_expr, env) {
+                                    EvalOk(value, _) => { let_env = env_define(let_env, name, value) }
+                                    EvalErr(msg) => { return EvalErr(msg) }
+                                }
+                            }
+                            _ => { return EvalErr("let: invalid binding") }
                         }
                     }
-                    _ => { return EvalErr("let: invalid binding") }
                 }
             }
             return eval_begin_list(body, let_env)
@@ -675,18 +693,24 @@ fn eval_begin(args: List[LispValue], env: Env) -> EvalResult {
 }
 
 fn eval_begin_list(exprs: List[LispValue], env: Env) -> EvalResult {
-    var current_env: Env = env
-    var result: LispValue = LispNil
-    for expr in exprs {
-        match eval(expr, current_env) {
-            EvalOk(value, new_env) => {
-                result = value
-                current_env = new_env
+    // Workaround for Kira bug: for loop on empty List[RecursiveType] crashes
+    match exprs {
+        Nil => { return EvalOk(LispNil, env) }
+        _ => {
+            var current_env: Env = env
+            var result: LispValue = LispNil
+            for expr in exprs {
+                match eval(expr, current_env) {
+                    EvalOk(value, new_env) => {
+                        result = value
+                        current_env = new_env
+                    }
+                    EvalErr(msg) => { return EvalErr(msg) }
+                }
             }
-            EvalErr(msg) => { return EvalErr(msg) }
+            return EvalOk(result, current_env)
         }
     }
-    return EvalOk(result, current_env)
 }
 
 fn eval_set(args: List[LispValue], env: Env) -> EvalResult {
@@ -707,36 +731,48 @@ fn eval_set(args: List[LispValue], env: Env) -> EvalResult {
 }
 
 fn eval_and(args: List[LispValue], env: Env) -> EvalResult {
-    var current_env: Env = env
-    var result: LispValue = LispBool(true)
-    for arg in args {
-        match eval(arg, current_env) {
-            EvalOk(value, new_env) => {
-                current_env = new_env
-                if not is_truthy(value) { return EvalOk(LispBool(false), current_env) }
-                result = value
+    // Workaround for Kira bug: for loop on empty List[RecursiveType] crashes
+    match args {
+        Nil => { return EvalOk(LispBool(true), env) }
+        _ => {
+            var current_env: Env = env
+            var result: LispValue = LispBool(true)
+            for arg in args {
+                match eval(arg, current_env) {
+                    EvalOk(value, new_env) => {
+                        current_env = new_env
+                        if not is_truthy(value) { return EvalOk(LispBool(false), current_env) }
+                        result = value
+                    }
+                    EvalErr(msg) => { return EvalErr(msg) }
+                }
             }
-            EvalErr(msg) => { return EvalErr(msg) }
+            return EvalOk(result, current_env)
         }
     }
-    return EvalOk(result, current_env)
 }
 
 fn eval_or(args: List[LispValue], env: Env) -> EvalResult {
-    var current_env: Env = env
-    for arg in args {
-        match eval(arg, current_env) {
-            EvalOk(value, new_env) => {
-                current_env = new_env
-                if is_truthy(value) { return EvalOk(value, current_env) }
+    // Workaround for Kira bug: for loop on empty List[RecursiveType] crashes
+    match args {
+        Nil => { return EvalOk(LispBool(false), env) }
+        _ => {
+            var current_env: Env = env
+            for arg in args {
+                match eval(arg, current_env) {
+                    EvalOk(value, new_env) => {
+                        current_env = new_env
+                        if is_truthy(value) { return EvalOk(value, current_env) }
+                    }
+                    EvalErr(msg) => { return EvalErr(msg) }
+                }
             }
-            EvalErr(msg) => { return EvalErr(msg) }
+            return EvalOk(LispBool(false), current_env)
         }
     }
-    return EvalOk(LispBool(false), current_env)
 }
 
-fn eval_application(op_expr: LispValue, args: List[LispValue], env: Env) -> EvalResult {
+effect fn eval_application(op_expr: LispValue, args: List[LispValue], env: Env) -> EvalResult {
     match eval(op_expr, env) {
         EvalOk(op, env2) => {
             match eval_list_values(args, env2) {
@@ -748,22 +784,28 @@ fn eval_application(op_expr: LispValue, args: List[LispValue], env: Env) -> Eval
     }
 }
 
-fn eval_list_values(exprs: List[LispValue], env: Env) -> Result[(List[LispValue], Env), string] {
-    var current_env: Env = env
-    var values: List[LispValue] = Nil
-    for expr in exprs {
-        match eval(expr, current_env) {
-            EvalOk(value, new_env) => {
-                values = Cons(value, values)
-                current_env = new_env
+effect fn eval_list_values(exprs: List[LispValue], env: Env) -> Result[(List[LispValue], Env), string] {
+    // Workaround for Kira bug: for loop on empty List[RecursiveType] crashes
+    match exprs {
+        Nil => { return Ok((Nil, env)) }
+        _ => {
+            var current_env: Env = env
+            var values: List[LispValue] = Nil
+            for expr in exprs {
+                match eval(expr, current_env) {
+                    EvalOk(value, new_env) => {
+                        values = Cons(value, values)
+                        current_env = new_env
+                    }
+                    EvalErr(msg) => { return Err(msg) }
+                }
             }
-            EvalErr(msg) => { return Err(msg) }
+            return Ok((std.list.reverse(values), current_env))
         }
     }
-    return Ok((std.list.reverse(values), current_env))
 }
 
-fn apply(func: LispValue, args: List[LispValue], env: Env) -> EvalResult {
+effect fn apply(func: LispValue, args: List[LispValue], env: Env) -> EvalResult {
     match func {
         LispLambda(params, body, closure_env) => {
             // Create call environment by extending closure_env with the caller's env as fallback
@@ -793,7 +835,7 @@ fn apply(func: LispValue, args: List[LispValue], env: Env) -> EvalResult {
 // Built-in Functions
 // ============================================================================
 
-fn apply_builtin(name: string, args: List[LispValue], env: Env) -> EvalResult {
+effect fn apply_builtin(name: string, args: List[LispValue], env: Env) -> EvalResult {
     if name == "+" { return builtin_add(args, env) }
     if name == "-" { return builtin_sub(args, env) }
     if name == "*" { return builtin_mul(args, env) }
@@ -826,27 +868,53 @@ fn apply_builtin(name: string, args: List[LispValue], env: Env) -> EvalResult {
     if name == "abs" { return builtin_abs(args, env) }
     if name == "min" { return builtin_min(args, env) }
     if name == "max" { return builtin_max(args, env) }
+    if name == "display" { return builtin_display(args, env) }
+    if name == "newline" { return builtin_newline(args, env) }
     return EvalErr("Unknown builtin: " + name)
 }
 
-fn builtin_add(args: List[LispValue], env: Env) -> EvalResult {
-    var sum_int: i64 = 0i64
-    var sum_float: f64 = 0.0
-    var is_float: bool = false
-    for arg in args {
-        match arg {
-            LispInt(n) => { if is_float { sum_float = sum_float + to_float(n) } else { sum_int = sum_int + n } }
-            LispFloat(n) => {
-                if not is_float {
-                    is_float = true
-                    sum_float = to_float(sum_int)
-                }
-                sum_float = sum_float + n
+effect fn builtin_display(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(v, Nil) => {
+            match v {
+                LispString(s) => { std.io.print(s) }
+                _ => { std.io.print(lisp_to_string(v)) }
             }
-            _ => { return EvalErr("+: expected number") }
+            return EvalOk(LispNil, env)
+        }
+        _ => { return EvalErr("display: requires one argument") }
+    }
+}
+
+effect fn builtin_newline(args: List[LispValue], env: Env) -> EvalResult {
+    std.io.println("")
+    return EvalOk(LispNil, env)
+}
+
+fn builtin_add(args: List[LispValue], env: Env) -> EvalResult {
+    // Workaround for Kira bug: for loop on empty List[RecursiveType] crashes
+    match args {
+        Nil => { return EvalOk(LispInt(0i64), env) }
+        _ => {
+            var sum_int: i64 = 0i64
+            var sum_float: f64 = 0.0
+            var is_float: bool = false
+            for arg in args {
+                match arg {
+                    LispInt(n) => { if is_float { sum_float = sum_float + to_float(n) } else { sum_int = sum_int + n } }
+                    LispFloat(n) => {
+                        if not is_float {
+                            is_float = true
+                            sum_float = to_float(sum_int)
+                        }
+                        sum_float = sum_float + n
+                    }
+                    _ => { return EvalErr("+: expected number") }
+                }
+            }
+            if is_float { return EvalOk(LispFloat(sum_float), env) } else { return EvalOk(LispInt(sum_int), env) }
         }
     }
-    if is_float { return EvalOk(LispFloat(sum_float), env) } else { return EvalOk(LispInt(sum_int), env) }
 }
 
 fn builtin_sub(args: List[LispValue], env: Env) -> EvalResult {
@@ -892,23 +960,29 @@ fn builtin_sub(args: List[LispValue], env: Env) -> EvalResult {
 }
 
 fn builtin_mul(args: List[LispValue], env: Env) -> EvalResult {
-    var prod_int: i64 = 1i64
-    var prod_float: f64 = 1.0
-    var is_float: bool = false
-    for arg in args {
-        match arg {
-            LispInt(n) => { if is_float { prod_float = prod_float * to_float(n) } else { prod_int = prod_int * n } }
-            LispFloat(n) => {
-                if not is_float {
-                    is_float = true
-                    prod_float = to_float(prod_int)
+    // Workaround for Kira bug: for loop on empty List[RecursiveType] crashes
+    match args {
+        Nil => { return EvalOk(LispInt(1i64), env) }
+        _ => {
+            var prod_int: i64 = 1i64
+            var prod_float: f64 = 1.0
+            var is_float: bool = false
+            for arg in args {
+                match arg {
+                    LispInt(n) => { if is_float { prod_float = prod_float * to_float(n) } else { prod_int = prod_int * n } }
+                    LispFloat(n) => {
+                        if not is_float {
+                            is_float = true
+                            prod_float = to_float(prod_int)
+                        }
+                        prod_float = prod_float * n
+                    }
+                    _ => { return EvalErr("*: expected number") }
                 }
-                prod_float = prod_float * n
             }
-            _ => { return EvalErr("*: expected number") }
+            if is_float { return EvalOk(LispFloat(prod_float), env) } else { return EvalOk(LispInt(prod_int), env) }
         }
     }
-    if is_float { return EvalOk(LispFloat(prod_float), env) } else { return EvalOk(LispInt(prod_int), env) }
 }
 
 fn builtin_div(args: List[LispValue], env: Env) -> EvalResult {
@@ -1115,14 +1189,20 @@ fn builtin_not(args: List[LispValue], env: Env) -> EvalResult {
 }
 
 fn builtin_string_append(args: List[LispValue], env: Env) -> EvalResult {
-    var sb: StringBuilder = std.builder.new()
-    for arg in args {
-        match arg {
-            LispString(s) => { sb = std.builder.append(sb, s) }
-            _ => { return EvalErr("string-append: requires strings") }
+    // Workaround for Kira bug: for loop on empty List[RecursiveType] crashes
+    match args {
+        Nil => { return EvalOk(LispString(""), env) }
+        _ => {
+            var sb: StringBuilder = std.builder.new()
+            for arg in args {
+                match arg {
+                    LispString(s) => { sb = std.builder.append(sb, s) }
+                    _ => { return EvalErr("string-append: requires strings") }
+                }
+            }
+            return EvalOk(LispString(std.builder.build(sb)), env)
         }
     }
-    return EvalOk(LispString(std.builder.build(sb)), env)
 }
 
 fn builtin_string_length(args: List[LispValue], env: Env) -> EvalResult {
@@ -1217,14 +1297,1264 @@ fn make_initial_env() -> Env {
     env = env_define(env, "abs", LispBuiltin("abs"))
     env = env_define(env, "min", LispBuiltin("min"))
     env = env_define(env, "max", LispBuiltin("max"))
+    env = env_define(env, "display", LispBuiltin("display"))
+    env = env_define(env, "newline", LispBuiltin("newline"))
     return env
+}
+
+// ============================================================================
+// Intermediate Representation (IR)
+// ============================================================================
+
+type IRExpr =
+    | IRConst(LispValue)
+    | IRVar(string)
+    | IRIf(IRExpr, IRExpr, IRExpr)
+    | IRLet(List[(string, IRExpr)], IRExpr)
+    | IRLambda(List[string], IRExpr)
+    | IRApp(IRExpr, List[IRExpr])
+    | IRDefine(string, IRExpr)
+    | IRBegin(List[IRExpr])
+    | IRSet(string, IRExpr)
+    | IRBuiltin(string, List[IRExpr])
+    | IRQuote(LispValue)
+    | IRAnd(List[IRExpr])
+    | IROr(List[IRExpr])
+
+type TransformResult =
+    | TransformOk(IRExpr)
+    | TransformErr(string)
+
+type TransformListResult =
+    | TransformListOk(List[IRExpr])
+    | TransformListErr(string)
+
+// ============================================================================
+// AST to IR Transformation
+// ============================================================================
+
+// List of builtin function names
+fn is_builtin_name(name: string) -> bool {
+    return name == "+" or name == "-" or name == "*" or name == "/" or
+           name == "mod" or name == "=" or name == "<" or name == ">" or
+           name == "<=" or name == ">=" or name == "cons" or name == "car" or
+           name == "cdr" or name == "list" or name == "null?" or name == "pair?" or
+           name == "length" or name == "number?" or name == "string?" or
+           name == "symbol?" or name == "procedure?" or name == "boolean?" or
+           name == "eq?" or name == "equal?" or name == "not" or
+           name == "string-append" or name == "string-length" or
+           name == "number->string" or name == "string->number" or
+           name == "abs" or name == "min" or name == "max" or
+           name == "display" or name == "newline"
+}
+
+fn to_ir(expr: LispValue) -> TransformResult {
+    match expr {
+        LispNil => { return TransformOk(IRConst(LispNil)) }
+        LispBool(b) => { return TransformOk(IRConst(LispBool(b))) }
+        LispInt(n) => { return TransformOk(IRConst(LispInt(n))) }
+        LispFloat(n) => { return TransformOk(IRConst(LispFloat(n))) }
+        LispString(s) => { return TransformOk(IRConst(LispString(s))) }
+        LispSymbol(name) => { return TransformOk(IRVar(name)) }
+        LispList(items) => { return to_ir_list(items) }
+        LispLambda(_, _, _) => { return TransformErr("Cannot transform runtime lambda to IR") }
+        LispBuiltin(_) => { return TransformErr("Cannot transform builtin to IR") }
+    }
+}
+
+fn to_ir_list(items: List[LispValue]) -> TransformResult {
+    match items {
+        Nil => { return TransformOk(IRConst(LispNil)) }
+        Cons(first, rest) => {
+            match first {
+                LispSymbol(name) => {
+                    if name == "quote" { return to_ir_quote(rest) }
+                    if name == "if" { return to_ir_if(rest) }
+                    if name == "define" { return to_ir_define(rest) }
+                    if name == "lambda" { return to_ir_lambda(rest) }
+                    if name == "let" { return to_ir_let(rest) }
+                    if name == "begin" { return to_ir_begin(rest) }
+                    if name == "set!" { return to_ir_set(rest) }
+                    if name == "and" { return to_ir_and(rest) }
+                    if name == "or" { return to_ir_or(rest) }
+                    // Check if it's a builtin call
+                    if is_builtin_name(name) {
+                        return to_ir_builtin(name, rest)
+                    }
+                    // Regular function application
+                    return to_ir_app(first, rest)
+                }
+                _ => { return to_ir_app(first, rest) }
+            }
+        }
+    }
+}
+
+fn to_ir_quote(args: List[LispValue]) -> TransformResult {
+    match args {
+        Cons(value, Nil) => { return TransformOk(IRQuote(value)) }
+        _ => { return TransformErr("quote requires one argument") }
+    }
+}
+
+fn to_ir_if(args: List[LispValue]) -> TransformResult {
+    match args {
+        Cons(cond, Cons(then_expr, else_part)) => {
+            match to_ir(cond) {
+                TransformOk(ir_cond) => {
+                    match to_ir(then_expr) {
+                        TransformOk(ir_then) => {
+                            match else_part {
+                                Cons(else_expr, Nil) => {
+                                    match to_ir(else_expr) {
+                                        TransformOk(ir_else) => {
+                                            return TransformOk(IRIf(ir_cond, ir_then, ir_else))
+                                        }
+                                        TransformErr(msg) => { return TransformErr(msg) }
+                                    }
+                                }
+                                Nil => {
+                                    return TransformOk(IRIf(ir_cond, ir_then, IRConst(LispNil)))
+                                }
+                                _ => { return TransformErr("if: too many arguments") }
+                            }
+                        }
+                        TransformErr(msg) => { return TransformErr(msg) }
+                    }
+                }
+                TransformErr(msg) => { return TransformErr(msg) }
+            }
+        }
+        _ => { return TransformErr("if requires 2-3 arguments") }
+    }
+}
+
+fn to_ir_define(args: List[LispValue]) -> TransformResult {
+    match args {
+        Cons(LispSymbol(name), Cons(value_expr, Nil)) => {
+            match to_ir(value_expr) {
+                TransformOk(ir_value) => { return TransformOk(IRDefine(name, ir_value)) }
+                TransformErr(msg) => { return TransformErr(msg) }
+            }
+        }
+        Cons(LispList(name_and_params), body) => {
+            // (define (name params...) body...) => (define name (lambda (params...) body...))
+            match name_and_params {
+                Cons(LispSymbol(name), params) => {
+                    match extract_param_names(params) {
+                        Ok(param_names) => {
+                            let lambda_body: LispValue = make_begin(body)
+                            match to_ir(lambda_body) {
+                                TransformOk(ir_body) => {
+                                    return TransformOk(IRDefine(name, IRLambda(param_names, ir_body)))
+                                }
+                                TransformErr(msg) => { return TransformErr(msg) }
+                            }
+                        }
+                        Err(msg) => { return TransformErr(msg) }
+                    }
+                }
+                _ => { return TransformErr("define: invalid function definition") }
+            }
+        }
+        _ => { return TransformErr("define: invalid syntax") }
+    }
+}
+
+fn to_ir_lambda(args: List[LispValue]) -> TransformResult {
+    match args {
+        Cons(LispList(params), body) => {
+            match extract_param_names(params) {
+                Ok(param_names) => {
+                    let lambda_body: LispValue = make_begin(body)
+                    match to_ir(lambda_body) {
+                        TransformOk(ir_body) => { return TransformOk(IRLambda(param_names, ir_body)) }
+                        TransformErr(msg) => { return TransformErr(msg) }
+                    }
+                }
+                Err(msg) => { return TransformErr(msg) }
+            }
+        }
+        _ => { return TransformErr("lambda: invalid syntax") }
+    }
+}
+
+fn to_ir_let(args: List[LispValue]) -> TransformResult {
+    match args {
+        Cons(LispList(bindings), body) => {
+            match to_ir_let_bindings(bindings) {
+                TransformListOk(ir_bindings_flat) => {
+                    let lambda_body: LispValue = make_begin(body)
+                    match to_ir(lambda_body) {
+                        TransformOk(ir_body) => {
+                            // Reconstruct binding pairs from flat list
+                            let binding_pairs: List[(string, IRExpr)] = reconstruct_bindings(bindings, ir_bindings_flat)
+                            return TransformOk(IRLet(binding_pairs, ir_body))
+                        }
+                        TransformErr(msg) => { return TransformErr(msg) }
+                    }
+                }
+                TransformListErr(msg) => { return TransformErr(msg) }
+            }
+        }
+        _ => { return TransformErr("let: invalid syntax") }
+    }
+}
+
+fn to_ir_let_bindings(bindings: List[LispValue]) -> TransformListResult {
+    // Workaround for Kira bug: for loop on empty List[RecursiveType] crashes
+    match bindings {
+        Nil => { return TransformListOk(Nil) }
+        _ => {
+            var ir_exprs: List[IRExpr] = Nil
+            for binding in bindings {
+                match binding {
+                    LispList(Cons(LispSymbol(_), Cons(value_expr, Nil))) => {
+                        match to_ir(value_expr) {
+                            TransformOk(ir_value) => { ir_exprs = Cons(ir_value, ir_exprs) }
+                            TransformErr(msg) => { return TransformListErr(msg) }
+                        }
+                    }
+                    _ => { return TransformListErr("let: invalid binding") }
+                }
+            }
+            return TransformListOk(std.list.reverse(ir_exprs))
+        }
+    }
+}
+
+fn reconstruct_bindings(bindings: List[LispValue], ir_exprs: List[IRExpr]) -> List[(string, IRExpr)] {
+    var result: List[(string, IRExpr)] = Nil
+    var bind_iter: List[LispValue] = bindings
+    var ir_iter: List[IRExpr] = ir_exprs
+    loop {
+        match (bind_iter, ir_iter) {
+            (Cons(LispList(Cons(LispSymbol(name), _)), rest_binds), Cons(ir_val, rest_irs)) => {
+                result = Cons((name, ir_val), result)
+                bind_iter = rest_binds
+                ir_iter = rest_irs
+            }
+            _ => { break }
+        }
+    }
+    return std.list.reverse(result)
+}
+
+fn to_ir_begin(args: List[LispValue]) -> TransformResult {
+    match to_ir_list_exprs(args) {
+        TransformListOk(ir_exprs) => { return TransformOk(IRBegin(ir_exprs)) }
+        TransformListErr(msg) => { return TransformErr(msg) }
+    }
+}
+
+fn to_ir_set(args: List[LispValue]) -> TransformResult {
+    match args {
+        Cons(LispSymbol(name), Cons(value_expr, Nil)) => {
+            match to_ir(value_expr) {
+                TransformOk(ir_value) => { return TransformOk(IRSet(name, ir_value)) }
+                TransformErr(msg) => { return TransformErr(msg) }
+            }
+        }
+        _ => { return TransformErr("set! requires variable and value") }
+    }
+}
+
+fn to_ir_and(args: List[LispValue]) -> TransformResult {
+    match to_ir_list_exprs(args) {
+        TransformListOk(ir_exprs) => { return TransformOk(IRAnd(ir_exprs)) }
+        TransformListErr(msg) => { return TransformErr(msg) }
+    }
+}
+
+fn to_ir_or(args: List[LispValue]) -> TransformResult {
+    match to_ir_list_exprs(args) {
+        TransformListOk(ir_exprs) => { return TransformOk(IROr(ir_exprs)) }
+        TransformListErr(msg) => { return TransformErr(msg) }
+    }
+}
+
+fn to_ir_builtin(name: string, args: List[LispValue]) -> TransformResult {
+    match to_ir_list_exprs(args) {
+        TransformListOk(ir_args) => { return TransformOk(IRBuiltin(name, ir_args)) }
+        TransformListErr(msg) => { return TransformErr(msg) }
+    }
+}
+
+fn to_ir_app(func: LispValue, args: List[LispValue]) -> TransformResult {
+    match to_ir(func) {
+        TransformOk(ir_func) => {
+            match to_ir_list_exprs(args) {
+                TransformListOk(ir_args) => { return TransformOk(IRApp(ir_func, ir_args)) }
+                TransformListErr(msg) => { return TransformErr(msg) }
+            }
+        }
+        TransformErr(msg) => { return TransformErr(msg) }
+    }
+}
+
+fn to_ir_list_exprs(exprs: List[LispValue]) -> TransformListResult {
+    // Workaround for Kira bug: for loop on empty List[RecursiveType] crashes
+    match exprs {
+        Nil => { return TransformListOk(Nil) }
+        _ => {
+            var result: List[IRExpr] = Nil
+            for expr in exprs {
+                match to_ir(expr) {
+                    TransformOk(ir_expr) => { result = Cons(ir_expr, result) }
+                    TransformErr(msg) => { return TransformListErr(msg) }
+                }
+            }
+            return TransformListOk(std.list.reverse(result))
+        }
+    }
+}
+
+fn to_ir_program(exprs: List[LispValue]) -> TransformListResult {
+    return to_ir_list_exprs(exprs)
+}
+
+// ============================================================================
+// Code Generator (IR -> Kira Source)
+// ============================================================================
+
+// Counter for generating unique variable names
+type CodegenState = { counter: i64 }
+
+fn codegen_fresh_var(state: CodegenState) -> (CodegenState, string) {
+    let new_state: CodegenState = CodegenState { counter: state.counter + 1i64 }
+    return (new_state, "_v" + to_string(state.counter))
+}
+
+fn escape_string(s: string) -> string {
+    var sb: StringBuilder = std.builder.new()
+    let len: i32 = std.string.length(s)
+    var i: i32 = 0
+    while i < len {
+        let c: char = char_at(s, i)
+        if c == '\n' {
+            sb = std.builder.append(sb, "\\n")
+        } else if c == '\t' {
+            sb = std.builder.append(sb, "\\t")
+        } else if c == '\r' {
+            sb = std.builder.append(sb, "\\r")
+        } else if c == '\\' {
+            sb = std.builder.append(sb, "\\\\")
+        } else if c == '"' {
+            sb = std.builder.append(sb, "\\\"")
+        } else {
+            sb = std.builder.append_char(sb, c)
+        }
+        i = i + 1
+    }
+    return std.builder.build(sb)
+}
+
+// Convert a Kira identifier to a valid Kira identifier
+fn mangle_name(name: string) -> string {
+    var sb: StringBuilder = std.builder.new()
+    let len: i32 = std.string.length(name)
+    var i: i32 = 0
+    while i < len {
+        let c: char = char_at(name, i)
+        if c == '-' {
+            sb = std.builder.append(sb, "_")
+        } else if c == '?' {
+            sb = std.builder.append(sb, "_p")
+        } else if c == '!' {
+            sb = std.builder.append(sb, "_bang")
+        } else if c == '+' {
+            sb = std.builder.append(sb, "_plus")
+        } else if c == '*' {
+            sb = std.builder.append(sb, "_star")
+        } else if c == '/' {
+            sb = std.builder.append(sb, "_slash")
+        } else if c == '<' {
+            sb = std.builder.append(sb, "_lt")
+        } else if c == '>' {
+            sb = std.builder.append(sb, "_gt")
+        } else if c == '=' {
+            sb = std.builder.append(sb, "_eq")
+        } else if c == '>' {
+            sb = std.builder.append(sb, "_gt")
+        } else {
+            sb = std.builder.append_char(sb, c)
+        }
+        i = i + 1
+    }
+    return std.builder.build(sb)
+}
+
+fn codegen_lisp_value(v: LispValue) -> string {
+    match v {
+        LispNil => { return "LispNil" }
+        LispBool(b) => {
+            if b { return "LispBool(true)" } else { return "LispBool(false)" }
+        }
+        LispInt(n) => { return "LispInt(" + to_string(n) + "i64)" }
+        LispFloat(n) => { return "LispFloat(" + to_string(n) + ")" }
+        LispString(s) => { return "LispString(\"" + escape_string(s) + "\")" }
+        LispSymbol(s) => { return "LispSymbol(\"" + escape_string(s) + "\")" }
+        LispList(items) => {
+            return "LispList(" + codegen_list_items(items) + ")"
+        }
+        LispLambda(_, _, _) => { return "LispNil" }  // Can't serialize closures
+        LispBuiltin(n) => { return "LispBuiltin(\"" + n + "\")" }
+    }
+}
+
+fn codegen_list_items(items: List[LispValue]) -> string {
+    match items {
+        Nil => { return "Nil" }
+        Cons(head, tail) => {
+            return "Cons(" + codegen_lisp_value(head) + ", " + codegen_list_items(tail) + ")"
+        }
+    }
+}
+
+fn codegen_expr(ir: IRExpr) -> string {
+    match ir {
+        IRConst(v) => { return codegen_lisp_value(v) }
+        IRVar(name) => { return mangle_name(name) }
+        IRQuote(v) => { return codegen_lisp_value(v) }
+        IRIf(cond, then_expr, else_expr) => {
+            // Kira's if is a statement. For if-expression semantics, use a helper function
+            // that uses match internally with return statements
+            // Generate: (fn() -> LispValue { match is_truthy(cond) { true => { return then } false => { return else } } })()
+            return "(fn() -> LispValue { match is_truthy(" + codegen_expr(cond) + ") { true => { return " +
+                   codegen_expr(then_expr) + " } false => { return " +
+                   codegen_expr(else_expr) + " } } })()"
+        }
+        IRLet(bindings, body) => {
+            var sb: StringBuilder = std.builder.new()
+            sb = std.builder.append(sb, "{ ")
+            for binding in bindings {
+                let (name, value): (string, IRExpr) = binding
+                sb = std.builder.append(sb, "let ")
+                sb = std.builder.append(sb, mangle_name(name))
+                sb = std.builder.append(sb, ": LispValue = ")
+                sb = std.builder.append(sb, codegen_expr(value))
+                sb = std.builder.append(sb, "; ")
+            }
+            sb = std.builder.append(sb, codegen_expr(body))
+            sb = std.builder.append(sb, " }")
+            return std.builder.build(sb)
+        }
+        IRLambda(params, body) => {
+            var sb: StringBuilder = std.builder.new()
+            sb = std.builder.append(sb, "fn(")
+            var first: bool = true
+            for p in params {
+                if not first { sb = std.builder.append(sb, ", ") }
+                sb = std.builder.append(sb, mangle_name(p))
+                sb = std.builder.append(sb, ": LispValue")
+                first = false
+            }
+            sb = std.builder.append(sb, ") -> LispValue { ")
+            sb = std.builder.append(sb, codegen_expr(body))
+            sb = std.builder.append(sb, " }")
+            return std.builder.build(sb)
+        }
+        IRApp(func, args) => {
+            // If func is a variable reference, call it directly (since we compile functions to Kira fns)
+            match func {
+                IRVar(name) => {
+                    var sb: StringBuilder = std.builder.new()
+                    sb = std.builder.append(sb, mangle_name(name))
+                    sb = std.builder.append(sb, "(")
+                    var first: bool = true
+                    // Workaround for Kira bug
+                    match args {
+                        Nil => { }
+                        _ => {
+                            for arg in args {
+                                if not first { sb = std.builder.append(sb, ", ") }
+                                sb = std.builder.append(sb, codegen_expr(arg))
+                                first = false
+                            }
+                        }
+                    }
+                    sb = std.builder.append(sb, ")")
+                    return std.builder.build(sb)
+                }
+                _ => {
+                    // For lambda expressions or other complex callees, we'd need LispFunc
+                    // For now, just generate a direct call (won't work for lambdas)
+                    var sb: StringBuilder = std.builder.new()
+                    sb = std.builder.append(sb, "/* complex callee */ (")
+                    sb = std.builder.append(sb, codegen_expr(func))
+                    sb = std.builder.append(sb, ")(")
+                    var first: bool = true
+                    match args {
+                        Nil => { }
+                        _ => {
+                            for arg in args {
+                                if not first { sb = std.builder.append(sb, ", ") }
+                                sb = std.builder.append(sb, codegen_expr(arg))
+                                first = false
+                            }
+                        }
+                    }
+                    sb = std.builder.append(sb, ")")
+                    return std.builder.build(sb)
+                }
+            }
+        }
+        IRDefine(name, value) => {
+            // Definitions are handled at top-level
+            return "/* define " + name + " */"
+        }
+        IRBegin(exprs) => {
+            // Workaround for Kira bug: for loop on empty List[RecursiveType] crashes
+            match exprs {
+                Nil => { return "LispNil" }
+                _ => {
+                    var sb: StringBuilder = std.builder.new()
+                    sb = std.builder.append(sb, "{ ")
+                    var result_var: string = "_result"
+                    sb = std.builder.append(sb, "var ")
+                    sb = std.builder.append(sb, result_var)
+                    sb = std.builder.append(sb, ": LispValue = LispNil; ")
+                    for expr in exprs {
+                        sb = std.builder.append(sb, result_var)
+                        sb = std.builder.append(sb, " = ")
+                        sb = std.builder.append(sb, codegen_expr(expr))
+                        sb = std.builder.append(sb, "; ")
+                    }
+                    sb = std.builder.append(sb, result_var)
+                    sb = std.builder.append(sb, " }")
+                    return std.builder.build(sb)
+                }
+            }
+        }
+        IRSet(name, value) => {
+            return "{ " + mangle_name(name) + " = " + codegen_expr(value) + "; LispNil }"
+        }
+        IRBuiltin(name, args) => {
+            return codegen_builtin_call(name, args)
+        }
+        IRAnd(exprs) => {
+            match exprs {
+                Nil => { return "LispBool(true)" }
+                Cons(single, Nil) => { return codegen_expr(single) }
+                _ => {
+                    var sb: StringBuilder = std.builder.new()
+                    sb = std.builder.append(sb, "{ var _and_result: LispValue = LispBool(true); ")
+                    for expr in exprs {
+                        sb = std.builder.append(sb, "_and_result = ")
+                        sb = std.builder.append(sb, codegen_expr(expr))
+                        sb = std.builder.append(sb, "; if not is_truthy(_and_result) { _and_result } else { ")
+                    }
+                    sb = std.builder.append(sb, "_and_result")
+                    for _ in exprs {
+                        sb = std.builder.append(sb, " }")
+                    }
+                    sb = std.builder.append(sb, " }")
+                    return std.builder.build(sb)
+                }
+            }
+        }
+        IROr(exprs) => {
+            match exprs {
+                Nil => { return "LispBool(false)" }
+                Cons(single, Nil) => { return codegen_expr(single) }
+                _ => {
+                    var sb: StringBuilder = std.builder.new()
+                    sb = std.builder.append(sb, "{ var _or_result: LispValue = LispBool(false); ")
+                    for expr in exprs {
+                        sb = std.builder.append(sb, "_or_result = ")
+                        sb = std.builder.append(sb, codegen_expr(expr))
+                        sb = std.builder.append(sb, "; if is_truthy(_or_result) { _or_result } else { ")
+                    }
+                    sb = std.builder.append(sb, "_or_result")
+                    for _ in exprs {
+                        sb = std.builder.append(sb, " }")
+                    }
+                    sb = std.builder.append(sb, " }")
+                    return std.builder.build(sb)
+                }
+            }
+        }
+    }
+}
+
+fn codegen_args_list(args: List[IRExpr]) -> string {
+    match args {
+        Nil => { return "Nil" }
+        Cons(arg, rest) => {
+            return "Cons(" + codegen_expr(arg) + ", " + codegen_args_list(rest) + ")"
+        }
+    }
+}
+
+fn codegen_builtin_call(name: string, args: List[IRExpr]) -> string {
+    // Generate inline code for builtins when possible
+    if name == "+" {
+        return "rt_add(" + codegen_args_list(args) + ")"
+    }
+    if name == "-" {
+        return "rt_sub(" + codegen_args_list(args) + ")"
+    }
+    if name == "*" {
+        return "rt_mul(" + codegen_args_list(args) + ")"
+    }
+    if name == "/" {
+        return "rt_div(" + codegen_args_list(args) + ")"
+    }
+    if name == "mod" {
+        return "rt_mod(" + codegen_args_list(args) + ")"
+    }
+    if name == "=" {
+        return "rt_num_eq(" + codegen_args_list(args) + ")"
+    }
+    if name == "<" {
+        return "rt_lt(" + codegen_args_list(args) + ")"
+    }
+    if name == ">" {
+        return "rt_gt(" + codegen_args_list(args) + ")"
+    }
+    if name == "<=" {
+        return "rt_le(" + codegen_args_list(args) + ")"
+    }
+    if name == ">=" {
+        return "rt_ge(" + codegen_args_list(args) + ")"
+    }
+    if name == "cons" {
+        return "rt_cons(" + codegen_args_list(args) + ")"
+    }
+    if name == "car" {
+        return "rt_car(" + codegen_args_list(args) + ")"
+    }
+    if name == "cdr" {
+        return "rt_cdr(" + codegen_args_list(args) + ")"
+    }
+    if name == "list" {
+        return "LispList(" + codegen_args_list(args) + ")"
+    }
+    if name == "null?" {
+        return "rt_null_p(" + codegen_args_list(args) + ")"
+    }
+    if name == "pair?" {
+        return "rt_pair_p(" + codegen_args_list(args) + ")"
+    }
+    if name == "length" {
+        return "rt_length(" + codegen_args_list(args) + ")"
+    }
+    if name == "not" {
+        return "rt_not(" + codegen_args_list(args) + ")"
+    }
+    if name == "eq?" {
+        return "rt_eq_p(" + codegen_args_list(args) + ")"
+    }
+    if name == "equal?" {
+        return "rt_equal_p(" + codegen_args_list(args) + ")"
+    }
+    if name == "display" {
+        return "rt_display(" + codegen_args_list(args) + ")"
+    }
+    if name == "newline" {
+        return "rt_newline()"
+    }
+    if name == "number?" {
+        return "rt_number_p(" + codegen_args_list(args) + ")"
+    }
+    if name == "string?" {
+        return "rt_string_p(" + codegen_args_list(args) + ")"
+    }
+    if name == "symbol?" {
+        return "rt_symbol_p(" + codegen_args_list(args) + ")"
+    }
+    if name == "procedure?" {
+        return "rt_procedure_p(" + codegen_args_list(args) + ")"
+    }
+    if name == "boolean?" {
+        return "rt_boolean_p(" + codegen_args_list(args) + ")"
+    }
+    if name == "string-append" {
+        return "rt_string_append(" + codegen_args_list(args) + ")"
+    }
+    if name == "string-length" {
+        return "rt_string_length(" + codegen_args_list(args) + ")"
+    }
+    if name == "number->string" {
+        return "rt_number_to_string(" + codegen_args_list(args) + ")"
+    }
+    if name == "string->number" {
+        return "rt_string_to_number(" + codegen_args_list(args) + ")"
+    }
+    if name == "abs" {
+        return "rt_abs(" + codegen_args_list(args) + ")"
+    }
+    if name == "min" {
+        return "rt_min(" + codegen_args_list(args) + ")"
+    }
+    if name == "max" {
+        return "rt_max(" + codegen_args_list(args) + ")"
+    }
+    // Fallback: generic builtin call
+    return "rt_call_builtin(\"" + name + "\", " + codegen_args_list(args) + ")"
+}
+
+// Collect top-level definitions
+fn collect_definitions(ir_exprs: List[IRExpr]) -> (List[(string, IRExpr)], List[IRExpr]) {
+    // Workaround for Kira bug: for loop on empty List[RecursiveType] crashes
+    match ir_exprs {
+        Nil => { return (Nil, Nil) }
+        _ => {
+            var defs: List[(string, IRExpr)] = Nil
+            var others: List[IRExpr] = Nil
+            for ir in ir_exprs {
+                match ir {
+                    IRDefine(name, value) => { defs = Cons((name, value), defs) }
+                    _ => { others = Cons(ir, others) }
+                }
+            }
+            return (std.list.reverse(defs), std.list.reverse(others))
+        }
+    }
+}
+
+// Generate the runtime library using StringBuilder to avoid multi-line string issues
+fn generate_runtime() -> string {
+    var sb: StringBuilder = std.builder.new()
+    let nl: string = "\n"
+
+    // Header
+    sb = std.builder.append(sb, "// Lisp Runtime Library (generated)" + nl)
+    sb = std.builder.append(sb, nl)
+
+    // LispValue type
+    sb = std.builder.append(sb, "type LispValue =" + nl)
+    sb = std.builder.append(sb, "    | LispNil" + nl)
+    sb = std.builder.append(sb, "    | LispBool(bool)" + nl)
+    sb = std.builder.append(sb, "    | LispInt(i64)" + nl)
+    sb = std.builder.append(sb, "    | LispFloat(f64)" + nl)
+    sb = std.builder.append(sb, "    | LispString(string)" + nl)
+    sb = std.builder.append(sb, "    | LispSymbol(string)" + nl)
+    sb = std.builder.append(sb, "    | LispList(List[LispValue])" + nl)
+    sb = std.builder.append(sb, nl)
+
+    // is_truthy
+    sb = std.builder.append(sb, "fn is_truthy(v: LispValue) -> bool {" + nl)
+    sb = std.builder.append(sb, "    match v { LispBool(b) => { return b } _ => { return true } }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    // lisp_to_string
+    sb = std.builder.append(sb, "fn lisp_to_string(v: LispValue) -> string {" + nl)
+    sb = std.builder.append(sb, "    match v {" + nl)
+    sb = std.builder.append(sb, "        LispNil => { return \"()\" }" + nl)
+    sb = std.builder.append(sb, "        LispBool(b) => { if b { return \"#t\" } else { return \"#f\" } }" + nl)
+    sb = std.builder.append(sb, "        LispInt(n) => { return to_string(n) }" + nl)
+    sb = std.builder.append(sb, "        LispFloat(n) => { return to_string(n) }" + nl)
+    sb = std.builder.append(sb, "        LispString(s) => { return \"\\\"\" + s + \"\\\"\" }" + nl)
+    sb = std.builder.append(sb, "        LispSymbol(s) => { return s }" + nl)
+    sb = std.builder.append(sb, "        LispList(items) => {" + nl)
+    sb = std.builder.append(sb, "            var sb: StringBuilder = std.builder.new()" + nl)
+    sb = std.builder.append(sb, "            sb = std.builder.append(sb, \"(\")" + nl)
+    sb = std.builder.append(sb, "            var first: bool = true" + nl)
+    sb = std.builder.append(sb, "            for item in items {" + nl)
+    sb = std.builder.append(sb, "                if not first { sb = std.builder.append(sb, \" \") }" + nl)
+    sb = std.builder.append(sb, "                sb = std.builder.append(sb, lisp_to_string(item))" + nl)
+    sb = std.builder.append(sb, "                first = false" + nl)
+    sb = std.builder.append(sb, "            }" + nl)
+    sb = std.builder.append(sb, "            sb = std.builder.append(sb, \")\")" + nl)
+    sb = std.builder.append(sb, "            return std.builder.build(sb)" + nl)
+    sb = std.builder.append(sb, "        }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    // Arithmetic: rt_add
+    sb = std.builder.append(sb, "fn rt_add(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    var sum: i64 = 0i64" + nl)
+    sb = std.builder.append(sb, "    for arg in args {" + nl)
+    sb = std.builder.append(sb, "        match arg {" + nl)
+    sb = std.builder.append(sb, "            LispInt(n) => { sum = sum + n }" + nl)
+    sb = std.builder.append(sb, "            _ => { return LispNil }" + nl)
+    sb = std.builder.append(sb, "        }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "    return LispInt(sum)" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    // rt_sub
+    sb = std.builder.append(sb, "fn rt_sub(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    match args {" + nl)
+    sb = std.builder.append(sb, "        Nil => { return LispNil }" + nl)
+    sb = std.builder.append(sb, "        Cons(LispInt(first), rest) => {" + nl)
+    sb = std.builder.append(sb, "            match rest {" + nl)
+    sb = std.builder.append(sb, "                Nil => { return LispInt(0i64 - first) }" + nl)
+    sb = std.builder.append(sb, "                _ => {" + nl)
+    sb = std.builder.append(sb, "                    var result: i64 = first" + nl)
+    sb = std.builder.append(sb, "                    for arg in rest {" + nl)
+    sb = std.builder.append(sb, "                        match arg {" + nl)
+    sb = std.builder.append(sb, "                            LispInt(n) => { result = result - n }" + nl)
+    sb = std.builder.append(sb, "                            _ => { return LispNil }" + nl)
+    sb = std.builder.append(sb, "                        }" + nl)
+    sb = std.builder.append(sb, "                    }" + nl)
+    sb = std.builder.append(sb, "                    return LispInt(result)" + nl)
+    sb = std.builder.append(sb, "                }" + nl)
+    sb = std.builder.append(sb, "            }" + nl)
+    sb = std.builder.append(sb, "        }" + nl)
+    sb = std.builder.append(sb, "        _ => { return LispNil }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    // rt_mul
+    sb = std.builder.append(sb, "fn rt_mul(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    var prod: i64 = 1i64" + nl)
+    sb = std.builder.append(sb, "    for arg in args {" + nl)
+    sb = std.builder.append(sb, "        match arg {" + nl)
+    sb = std.builder.append(sb, "            LispInt(n) => { prod = prod * n }" + nl)
+    sb = std.builder.append(sb, "            _ => { return LispNil }" + nl)
+    sb = std.builder.append(sb, "        }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "    return LispInt(prod)" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    // rt_div
+    sb = std.builder.append(sb, "fn rt_div(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    match args {" + nl)
+    sb = std.builder.append(sb, "        Cons(LispInt(a), Cons(LispInt(b), Nil)) => {" + nl)
+    sb = std.builder.append(sb, "            if b == 0i64 { return LispNil }" + nl)
+    sb = std.builder.append(sb, "            return LispInt(a / b)" + nl)
+    sb = std.builder.append(sb, "        }" + nl)
+    sb = std.builder.append(sb, "        _ => { return LispNil }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    // rt_mod
+    sb = std.builder.append(sb, "fn rt_mod(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    match args {" + nl)
+    sb = std.builder.append(sb, "        Cons(LispInt(a), Cons(LispInt(b), Nil)) => {" + nl)
+    sb = std.builder.append(sb, "            if b == 0i64 { return LispNil }" + nl)
+    sb = std.builder.append(sb, "            return LispInt(a % b)" + nl)
+    sb = std.builder.append(sb, "        }" + nl)
+    sb = std.builder.append(sb, "        _ => { return LispNil }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    // Comparison functions
+    sb = std.builder.append(sb, "fn rt_num_eq(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    match args {" + nl)
+    sb = std.builder.append(sb, "        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { return LispBool(a == b) }" + nl)
+    sb = std.builder.append(sb, "        _ => { return LispBool(false) }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    sb = std.builder.append(sb, "fn rt_lt(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    match args {" + nl)
+    sb = std.builder.append(sb, "        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { return LispBool(a < b) }" + nl)
+    sb = std.builder.append(sb, "        _ => { return LispBool(false) }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    sb = std.builder.append(sb, "fn rt_gt(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    match args {" + nl)
+    sb = std.builder.append(sb, "        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { return LispBool(a > b) }" + nl)
+    sb = std.builder.append(sb, "        _ => { return LispBool(false) }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    sb = std.builder.append(sb, "fn rt_le(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    match args {" + nl)
+    sb = std.builder.append(sb, "        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { return LispBool(a <= b) }" + nl)
+    sb = std.builder.append(sb, "        _ => { return LispBool(false) }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    sb = std.builder.append(sb, "fn rt_ge(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    match args {" + nl)
+    sb = std.builder.append(sb, "        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { return LispBool(a >= b) }" + nl)
+    sb = std.builder.append(sb, "        _ => { return LispBool(false) }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    // List operations
+    sb = std.builder.append(sb, "fn rt_cons(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    match args {" + nl)
+    sb = std.builder.append(sb, "        Cons(head, Cons(LispList(tail), Nil)) => { return LispList(Cons(head, tail)) }" + nl)
+    sb = std.builder.append(sb, "        Cons(head, Cons(LispNil, Nil)) => { return LispList(Cons(head, Nil)) }" + nl)
+    sb = std.builder.append(sb, "        _ => { return LispNil }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    sb = std.builder.append(sb, "fn rt_car(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    match args {" + nl)
+    sb = std.builder.append(sb, "        Cons(LispList(Cons(head, _)), Nil) => { return head }" + nl)
+    sb = std.builder.append(sb, "        _ => { return LispNil }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    sb = std.builder.append(sb, "fn rt_cdr(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    match args {" + nl)
+    sb = std.builder.append(sb, "        Cons(LispList(Cons(_, tail)), Nil) => { return LispList(tail) }" + nl)
+    sb = std.builder.append(sb, "        _ => { return LispNil }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    sb = std.builder.append(sb, "fn rt_null_p(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    match args {" + nl)
+    sb = std.builder.append(sb, "        Cons(LispList(Nil), Nil) => { return LispBool(true) }" + nl)
+    sb = std.builder.append(sb, "        Cons(LispNil, Nil) => { return LispBool(true) }" + nl)
+    sb = std.builder.append(sb, "        Cons(_, Nil) => { return LispBool(false) }" + nl)
+    sb = std.builder.append(sb, "        _ => { return LispBool(false) }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    sb = std.builder.append(sb, "fn rt_pair_p(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    match args {" + nl)
+    sb = std.builder.append(sb, "        Cons(LispList(Cons(_, _)), Nil) => { return LispBool(true) }" + nl)
+    sb = std.builder.append(sb, "        Cons(_, Nil) => { return LispBool(false) }" + nl)
+    sb = std.builder.append(sb, "        _ => { return LispBool(false) }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    sb = std.builder.append(sb, "fn rt_length(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    match args {" + nl)
+    sb = std.builder.append(sb, "        Cons(LispList(items), Nil) => { return LispInt(std.list.length(items)) }" + nl)
+    sb = std.builder.append(sb, "        Cons(LispNil, Nil) => { return LispInt(0i64) }" + nl)
+    sb = std.builder.append(sb, "        _ => { return LispNil }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    // Boolean
+    sb = std.builder.append(sb, "fn rt_not(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    match args {" + nl)
+    sb = std.builder.append(sb, "        Cons(v, Nil) => { return LispBool(not is_truthy(v)) }" + nl)
+    sb = std.builder.append(sb, "        _ => { return LispNil }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    // Equality
+    sb = std.builder.append(sb, "fn rt_eq_p(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    match args {" + nl)
+    sb = std.builder.append(sb, "        Cons(a, Cons(b, Nil)) => {" + nl)
+    sb = std.builder.append(sb, "            match (a, b) {" + nl)
+    sb = std.builder.append(sb, "                (LispNil, LispNil) => { return LispBool(true) }" + nl)
+    sb = std.builder.append(sb, "                (LispBool(x), LispBool(y)) => { return LispBool(x == y) }" + nl)
+    sb = std.builder.append(sb, "                (LispInt(x), LispInt(y)) => { return LispBool(x == y) }" + nl)
+    sb = std.builder.append(sb, "                (LispSymbol(x), LispSymbol(y)) => { return LispBool(x == y) }" + nl)
+    sb = std.builder.append(sb, "                (LispString(x), LispString(y)) => { return LispBool(x == y) }" + nl)
+    sb = std.builder.append(sb, "                _ => { return LispBool(false) }" + nl)
+    sb = std.builder.append(sb, "            }" + nl)
+    sb = std.builder.append(sb, "        }" + nl)
+    sb = std.builder.append(sb, "        _ => { return LispBool(false) }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    // Deep equality
+    sb = std.builder.append(sb, "fn lists_equal_rt(xs: List[LispValue], ys: List[LispValue]) -> bool {" + nl)
+    sb = std.builder.append(sb, "    match (xs, ys) {" + nl)
+    sb = std.builder.append(sb, "        (Nil, Nil) => { return true }" + nl)
+    sb = std.builder.append(sb, "        (Cons(x, xr), Cons(y, yr)) => {" + nl)
+    sb = std.builder.append(sb, "            if not values_equal_rt(x, y) { return false }" + nl)
+    sb = std.builder.append(sb, "            return lists_equal_rt(xr, yr)" + nl)
+    sb = std.builder.append(sb, "        }" + nl)
+    sb = std.builder.append(sb, "        _ => { return false }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    sb = std.builder.append(sb, "fn values_equal_rt(a: LispValue, b: LispValue) -> bool {" + nl)
+    sb = std.builder.append(sb, "    match (a, b) {" + nl)
+    sb = std.builder.append(sb, "        (LispNil, LispNil) => { return true }" + nl)
+    sb = std.builder.append(sb, "        (LispBool(x), LispBool(y)) => { return x == y }" + nl)
+    sb = std.builder.append(sb, "        (LispInt(x), LispInt(y)) => { return x == y }" + nl)
+    sb = std.builder.append(sb, "        (LispFloat(x), LispFloat(y)) => { return x == y }" + nl)
+    sb = std.builder.append(sb, "        (LispSymbol(x), LispSymbol(y)) => { return x == y }" + nl)
+    sb = std.builder.append(sb, "        (LispString(x), LispString(y)) => { return x == y }" + nl)
+    sb = std.builder.append(sb, "        (LispList(xs), LispList(ys)) => { return lists_equal_rt(xs, ys) }" + nl)
+    sb = std.builder.append(sb, "        _ => { return false }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    sb = std.builder.append(sb, "fn rt_equal_p(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    match args {" + nl)
+    sb = std.builder.append(sb, "        Cons(a, Cons(b, Nil)) => { return LispBool(values_equal_rt(a, b)) }" + nl)
+    sb = std.builder.append(sb, "        _ => { return LispBool(false) }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    // Type predicates
+    sb = std.builder.append(sb, "fn rt_number_p(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    match args {" + nl)
+    sb = std.builder.append(sb, "        Cons(LispInt(_), Nil) => { return LispBool(true) }" + nl)
+    sb = std.builder.append(sb, "        Cons(LispFloat(_), Nil) => { return LispBool(true) }" + nl)
+    sb = std.builder.append(sb, "        Cons(_, Nil) => { return LispBool(false) }" + nl)
+    sb = std.builder.append(sb, "        _ => { return LispBool(false) }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    sb = std.builder.append(sb, "fn rt_string_p(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    match args {" + nl)
+    sb = std.builder.append(sb, "        Cons(LispString(_), Nil) => { return LispBool(true) }" + nl)
+    sb = std.builder.append(sb, "        Cons(_, Nil) => { return LispBool(false) }" + nl)
+    sb = std.builder.append(sb, "        _ => { return LispBool(false) }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    sb = std.builder.append(sb, "fn rt_symbol_p(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    match args {" + nl)
+    sb = std.builder.append(sb, "        Cons(LispSymbol(_), Nil) => { return LispBool(true) }" + nl)
+    sb = std.builder.append(sb, "        Cons(_, Nil) => { return LispBool(false) }" + nl)
+    sb = std.builder.append(sb, "        _ => { return LispBool(false) }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    sb = std.builder.append(sb, "fn rt_procedure_p(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    match args {" + nl)
+    sb = std.builder.append(sb, "        Cons(_, Nil) => { return LispBool(false) }" + nl)
+    sb = std.builder.append(sb, "        _ => { return LispBool(false) }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    sb = std.builder.append(sb, "fn rt_boolean_p(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    match args {" + nl)
+    sb = std.builder.append(sb, "        Cons(LispBool(_), Nil) => { return LispBool(true) }" + nl)
+    sb = std.builder.append(sb, "        Cons(_, Nil) => { return LispBool(false) }" + nl)
+    sb = std.builder.append(sb, "        _ => { return LispBool(false) }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    // String operations
+    sb = std.builder.append(sb, "fn rt_string_append(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    var sb: StringBuilder = std.builder.new()" + nl)
+    sb = std.builder.append(sb, "    for arg in args {" + nl)
+    sb = std.builder.append(sb, "        match arg {" + nl)
+    sb = std.builder.append(sb, "            LispString(s) => { sb = std.builder.append(sb, s) }" + nl)
+    sb = std.builder.append(sb, "            _ => { return LispNil }" + nl)
+    sb = std.builder.append(sb, "        }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "    return LispString(std.builder.build(sb))" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    sb = std.builder.append(sb, "fn rt_string_length(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    match args {" + nl)
+    sb = std.builder.append(sb, "        Cons(LispString(s), Nil) => { return LispInt(std.string.length(s)) }" + nl)
+    sb = std.builder.append(sb, "        _ => { return LispNil }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    sb = std.builder.append(sb, "fn rt_number_to_string(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    match args {" + nl)
+    sb = std.builder.append(sb, "        Cons(LispInt(n), Nil) => { return LispString(to_string(n)) }" + nl)
+    sb = std.builder.append(sb, "        Cons(LispFloat(n), Nil) => { return LispString(to_string(n)) }" + nl)
+    sb = std.builder.append(sb, "        _ => { return LispNil }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    sb = std.builder.append(sb, "fn rt_string_to_number(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    match args {" + nl)
+    sb = std.builder.append(sb, "        Cons(LispString(s), Nil) => {" + nl)
+    sb = std.builder.append(sb, "            match std.string.parse_int(s) {" + nl)
+    sb = std.builder.append(sb, "                Some(n) => { return LispInt(n) }" + nl)
+    sb = std.builder.append(sb, "                None => {" + nl)
+    sb = std.builder.append(sb, "                    match std.string.parse_float(s) {" + nl)
+    sb = std.builder.append(sb, "                        Some(f) => { return LispFloat(f) }" + nl)
+    sb = std.builder.append(sb, "                        None => { return LispBool(false) }" + nl)
+    sb = std.builder.append(sb, "                    }" + nl)
+    sb = std.builder.append(sb, "                }" + nl)
+    sb = std.builder.append(sb, "            }" + nl)
+    sb = std.builder.append(sb, "        }" + nl)
+    sb = std.builder.append(sb, "        _ => { return LispNil }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    // Math
+    sb = std.builder.append(sb, "fn rt_abs(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    match args {" + nl)
+    sb = std.builder.append(sb, "        Cons(LispInt(n), Nil) => { if n < 0i64 { return LispInt(0i64 - n) } else { return LispInt(n) } }" + nl)
+    sb = std.builder.append(sb, "        Cons(LispFloat(n), Nil) => { if n < 0.0 { return LispFloat(0.0 - n) } else { return LispFloat(n) } }" + nl)
+    sb = std.builder.append(sb, "        _ => { return LispNil }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    sb = std.builder.append(sb, "fn rt_min(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    match args {" + nl)
+    sb = std.builder.append(sb, "        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { if a < b { return LispInt(a) } else { return LispInt(b) } }" + nl)
+    sb = std.builder.append(sb, "        _ => { return LispNil }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    sb = std.builder.append(sb, "fn rt_max(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    match args {" + nl)
+    sb = std.builder.append(sb, "        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { if a > b { return LispInt(a) } else { return LispInt(b) } }" + nl)
+    sb = std.builder.append(sb, "        _ => { return LispNil }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    // I/O
+    sb = std.builder.append(sb, "effect fn rt_display(args: List[LispValue]) -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    match args {" + nl)
+    sb = std.builder.append(sb, "        Cons(v, Nil) => {" + nl)
+    sb = std.builder.append(sb, "            match v {" + nl)
+    sb = std.builder.append(sb, "                LispString(s) => { std.io.print(s) }" + nl)
+    sb = std.builder.append(sb, "                _ => { std.io.print(lisp_to_string(v)) }" + nl)
+    sb = std.builder.append(sb, "            }" + nl)
+    sb = std.builder.append(sb, "            return LispNil" + nl)
+    sb = std.builder.append(sb, "        }" + nl)
+    sb = std.builder.append(sb, "        _ => { return LispNil }" + nl)
+    sb = std.builder.append(sb, "    }" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    sb = std.builder.append(sb, "effect fn rt_newline() -> LispValue {" + nl)
+    sb = std.builder.append(sb, "    std.io.println(\"\")" + nl)
+    sb = std.builder.append(sb, "    return LispNil" + nl)
+    sb = std.builder.append(sb, "}" + nl)
+    sb = std.builder.append(sb, nl)
+
+    return std.builder.build(sb)
+}
+
+// Generate compiled Kira program
+fn generate_program(ir_exprs: List[IRExpr]) -> string {
+    var sb: StringBuilder = std.builder.new()
+
+    // Add runtime
+    sb = std.builder.append(sb, generate_runtime())
+
+    // Separate definitions from other expressions
+    let (defs, others): (List[(string, IRExpr)], List[IRExpr]) = collect_definitions(ir_exprs)
+
+    // Generate global definitions
+    sb = std.builder.append(sb, "// User-defined functions\n")
+    // Workaround for Kira bug: for loop on empty List containing recursive types crashes
+    match defs {
+        Nil => { }
+        _ => {
+            for def in defs {
+                let (name, value): (string, IRExpr) = def
+                match value {
+                    IRLambda(params, body) => {
+                        // Generate as a named function
+                        sb = std.builder.append(sb, "fn ")
+                        sb = std.builder.append(sb, mangle_name(name))
+                        sb = std.builder.append(sb, "(")
+                        var first: bool = true
+                        // params is List[string], not recursive, should be OK
+                        for p in params {
+                            if not first { sb = std.builder.append(sb, ", ") }
+                            sb = std.builder.append(sb, mangle_name(p))
+                            sb = std.builder.append(sb, ": LispValue")
+                            first = false
+                        }
+                        sb = std.builder.append(sb, ") -> LispValue {\n    return ")
+                        sb = std.builder.append(sb, codegen_expr(body))
+                        sb = std.builder.append(sb, "\n}\n\n")
+                    }
+                    _ => {
+                        // Generate as a global variable
+                        sb = std.builder.append(sb, "var ")
+                        sb = std.builder.append(sb, mangle_name(name))
+                        sb = std.builder.append(sb, ": LispValue = ")
+                        sb = std.builder.append(sb, codegen_expr(value))
+                        sb = std.builder.append(sb, "\n\n")
+                    }
+                }
+            }
+        }
+    }
+
+    // Generate main function with top-level expressions
+    sb = std.builder.append(sb, "effect fn main() -> void {\n")
+    // Workaround for Kira bug: for loop on empty List[RecursiveType] crashes
+    match others {
+        Nil => { }
+        _ => {
+            for expr in others {
+                sb = std.builder.append(sb, "    let _: LispValue = ")
+                sb = std.builder.append(sb, codegen_expr(expr))
+                sb = std.builder.append(sb, "\n")
+            }
+        }
+    }
+    sb = std.builder.append(sb, "}\n")
+
+    return std.builder.build(sb)
+}
+
+// ============================================================================
+// Compiler Entry Point
+// ============================================================================
+
+effect fn compile_file(input_path: string, output_path: string) -> void {
+    match std.fs.read_file(input_path) {
+        Ok(source) => {
+            match tokenize(source) {
+                LexOk(tokens) => {
+                    match parse_all(tokens) {
+                        ParseAllOk(exprs) => {
+                            match to_ir_program(exprs) {
+                                TransformListOk(ir_exprs) => {
+                                    let output: string = generate_program(ir_exprs)
+                                    match std.fs.write_file(output_path, output) {
+                                        Ok(_) => {
+                                            std.io.println("Compiled " + input_path + " to " + output_path)
+                                        }
+                                        Err(msg) => {
+                                            std.io.println("Error writing output: " + msg)
+                                        }
+                                    }
+                                }
+                                TransformListErr(msg) => {
+                                    std.io.println("Transform error: " + msg)
+                                }
+                            }
+                        }
+                        ParseAllErr(msg) => {
+                            std.io.println("Parse error: " + msg)
+                        }
+                    }
+                }
+                LexErr(msg, pos) => {
+                    std.io.println("Lex error at " + to_string(pos) + ": " + msg)
+                }
+            }
+        }
+        Err(msg) => {
+            std.io.println("Error reading file: " + msg)
+        }
+    }
 }
 
 // ============================================================================
 // REPL and Main
 // ============================================================================
 
-fn run_program(source: string, env: Env) -> EvalResult {
+effect fn run_program(source: string, env: Env) -> EvalResult {
     match tokenize(source) {
         LexOk(tokens) => {
             match parse_all(tokens) {
@@ -1308,10 +2638,39 @@ effect fn run_file(path: string) -> void {
     }
 }
 
+fn replace_extension(path: string, new_ext: string) -> string {
+    // Find the last '.' in the path
+    let len: i32 = std.string.length(path)
+    var dot_pos: i32 = -1
+    var i: i32 = len - 1
+    while i >= 0 {
+        if char_at(path, i) == '.' {
+            dot_pos = i
+            break
+        }
+        if char_at(path, i) == '/' {
+            break
+        }
+        i = i - 1
+    }
+    if dot_pos > 0 {
+        return substr(path, 0, dot_pos) + new_ext
+    } else {
+        return path + new_ext
+    }
+}
+
+// To use the compiler, comment out REPL code below and uncomment compile_file
+// Example: compile_file("examples/factorial.lisp", "examples/factorial_compiled.ki")
+
 effect fn main() -> void {
+    // REPL mode (default)
     std.io.println("Kira Lisp Interpreter")
     std.io.println("Type (exit) or (quit) to exit")
     std.io.println("")
     let env: Env = make_initial_env()
     repl_loop(env)
+
+    // Compile mode - uncomment below and comment out REPL code above
+    // compile_file("examples/factorial.lisp", "examples/factorial_compiled.ki")
 }

@@ -376,11 +376,11 @@ examples/
 - [x] Working REPL
 
 ### Full Compiler
-- [ ] Compile Lisp to Kira source code
+- [x] Compile Lisp to Kira source code
 - [x] Support let, define, lambda, if, begin
 - [x] List operations (cons, car, cdr)
 - [x] Standard library of builtins
-- [ ] File-based compilation
+- [x] File-based compilation (via code modification, no CLI args in Kira)
 
 ### Stretch Goals
 - [ ] Tail call optimization
@@ -394,9 +394,17 @@ examples/
 
 ### Completed (2024-01-26, updated 2026-01-27)
 
-The MVP interpreter is fully functional. All code is consolidated in `src/main.ki` for simplicity.
+The MVP interpreter is fully functional, and the compiler infrastructure (IR, transform, codegen) has been implemented. All code is consolidated in `src/main.ki` for simplicity.
 
-**2026-01-27 Update:** Removed workarounds for Kira stdlib bugs that have been fixed:
+**2026-01-27 Update (Compiler):** Added compiler infrastructure:
+- **IR Types**: Intermediate representation for Lisp code (`IRExpr` sum type)
+- **AST to IR Transform**: Converts parsed Lisp to IR with special form handling
+- **Code Generator**: Generates Kira source code from IR
+- **Runtime Library**: Generates runtime support functions for compiled code
+- Added `display` and `newline` builtins for I/O
+- Added workarounds for Kira bug with `for` loops on empty `List[RecursiveType]`
+
+**2026-01-27 Update (Stdlib):** Removed workarounds for fixed Kira stdlib bugs:
 - `std.string.length()` now returns `i32` directly (was `Result[i32, string]`)
 - `std.string.char_at()` now returns `Option[char]` directly (was `Result[Option[char], string]`)
 - `std.string.substring()` now returns `Option[string]` (was `Result[string, string]`)
@@ -408,9 +416,10 @@ The MVP interpreter is fully functional. All code is consolidated in `src/main.k
 - Parser: recursive descent parser for S-expressions with quote shorthand
 - Evaluator: full evaluation with proper lexical scoping
 - Special forms: `quote`, `if`, `define`, `lambda`, `let`, `begin`, `set!`, `and`, `or`
-- Builtins: arithmetic (`+`, `-`, `*`, `/`, `mod`), comparison (`=`, `<`, `>`, `<=`, `>=`), list ops (`cons`, `car`, `cdr`, `list`, `null?`, `pair?`, `length`), type predicates, equality, string operations
+- Builtins: arithmetic (`+`, `-`, `*`, `/`, `mod`), comparison (`=`, `<`, `>`, `<=`, `>=`), list ops (`cons`, `car`, `cdr`, `list`, `null?`, `pair?`, `length`), type predicates, equality, string operations, I/O (`display`, `newline`)
 - Recursive functions work correctly
 - Higher-order functions (map, filter patterns) work
+- Compiler: AST → IR → Kira source code generation
 
 **Example Session:**
 ```
@@ -426,13 +435,26 @@ lisp> (define (map f lst) (if (null? lst) (quote ()) (cons (f (car lst)) (map f 
 ()
 lisp> (map (lambda (x) (* x x)) (quote (1 2 3 4 5)))
 (1 4 9 16 25)
+lisp> (display "Hello, ") (display "World!") (newline)
+Hello, World!
+()
+```
+
+**Compiler Usage:**
+To compile a Lisp file to Kira, modify the `main()` function in `src/main.ki`:
+```kira
+// Comment out REPL code and add:
+compile_file("examples/factorial.lisp", "examples/factorial_compiled.ki")
 ```
 
 **Known Limitations:**
 - Multi-line REPL input not supported (expressions must be on single lines)
+- Kira doesn't support command-line arguments, so mode selection is via code modification
+- Kira bug: `for` loops on empty `List[RecursiveType]` crash (workarounds in place)
 
 **Files Created:**
-- `src/main.ki` - Complete interpreter (lexer, parser, evaluator, REPL)
+- `src/main.ki` - Complete interpreter and compiler (lexer, parser, evaluator, IR, transform, codegen, REPL)
+- `src/compile.ki` - Compiler usage instructions
 - `src/types.ki` - Standalone type definitions (for reference)
 - `src/lexer.ki` - Standalone lexer (for reference)
 - `src/parser.ki` - Standalone parser (for reference)
@@ -456,6 +478,11 @@ lisp> (map (lambda (x) (* x x)) (quote (1 2 3 4 5)))
 2. **Closures**: Need to capture environment in lambda values
 3. **Mutability**: Lisp's `set!` requires mutable environments; use `var` bindings in Kira
 4. **Performance**: Interpreter may be slow; compiler with Kira backend will be faster
+
+### Known Kira Bugs (with workarounds in place)
+1. **`for` loop on empty `List[RecursiveType]` crashes**: When iterating over an empty list of a recursive sum type (like `List[LispValue]` or `List[IRExpr]`), Kira throws a TypeMismatch error. Workaround: Always check `match list { Nil => ... _ => { for ... } }` before using `for` loops.
+2. **`if` is a statement, not an expression**: Kira's `if` doesn't return a value. Workaround: Use immediately-invoked function expressions (IIFE) with `match` inside: `(fn() -> T { match cond { true => { return x } false => { return y } } })()`
+3. **No command-line argument support**: Kira doesn't have `std.env.args()` or similar. Workaround: Modify source code to switch between modes.
 
 ### References
 - [Structure and Interpretation of Computer Programs](https://mitpress.mit.edu/sites/default/files/sicp/index.html)

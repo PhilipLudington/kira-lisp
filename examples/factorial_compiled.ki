@@ -1,0 +1,371 @@
+// Lisp Runtime Library (generated)
+
+type LispValue =
+    | LispNil
+    | LispBool(bool)
+    | LispInt(i64)
+    | LispFloat(f64)
+    | LispString(string)
+    | LispSymbol(string)
+    | LispList(List[LispValue])
+
+fn is_truthy(v: LispValue) -> bool {
+    match v { LispBool(b) => { return b } _ => { return true } }
+}
+
+fn lisp_to_string(v: LispValue) -> string {
+    match v {
+        LispNil => { return "()" }
+        LispBool(b) => { if b { return "#t" } else { return "#f" } }
+        LispInt(n) => { return to_string(n) }
+        LispFloat(n) => { return to_string(n) }
+        LispString(s) => { return "\"" + s + "\"" }
+        LispSymbol(s) => { return s }
+        LispList(items) => {
+            var sb: StringBuilder = std.builder.new()
+            sb = std.builder.append(sb, "(")
+            var first: bool = true
+            for item in items {
+                if not first { sb = std.builder.append(sb, " ") }
+                sb = std.builder.append(sb, lisp_to_string(item))
+                first = false
+            }
+            sb = std.builder.append(sb, ")")
+            return std.builder.build(sb)
+        }
+    }
+}
+
+fn rt_add(args: List[LispValue]) -> LispValue {
+    var sum: i64 = 0i64
+    for arg in args {
+        match arg {
+            LispInt(n) => { sum = sum + n }
+            _ => { return LispNil }
+        }
+    }
+    return LispInt(sum)
+}
+
+fn rt_sub(args: List[LispValue]) -> LispValue {
+    match args {
+        Nil => { return LispNil }
+        Cons(LispInt(first), rest) => {
+            match rest {
+                Nil => { return LispInt(0i64 - first) }
+                _ => {
+                    var result: i64 = first
+                    for arg in rest {
+                        match arg {
+                            LispInt(n) => { result = result - n }
+                            _ => { return LispNil }
+                        }
+                    }
+                    return LispInt(result)
+                }
+            }
+        }
+        _ => { return LispNil }
+    }
+}
+
+fn rt_mul(args: List[LispValue]) -> LispValue {
+    var prod: i64 = 1i64
+    for arg in args {
+        match arg {
+            LispInt(n) => { prod = prod * n }
+            _ => { return LispNil }
+        }
+    }
+    return LispInt(prod)
+}
+
+fn rt_div(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispInt(a), Cons(LispInt(b), Nil)) => {
+            if b == 0i64 { return LispNil }
+            return LispInt(a / b)
+        }
+        _ => { return LispNil }
+    }
+}
+
+fn rt_mod(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispInt(a), Cons(LispInt(b), Nil)) => {
+            if b == 0i64 { return LispNil }
+            return LispInt(a % b)
+        }
+        _ => { return LispNil }
+    }
+}
+
+fn rt_num_eq(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { return LispBool(a == b) }
+        _ => { return LispBool(false) }
+    }
+}
+
+fn rt_lt(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { return LispBool(a < b) }
+        _ => { return LispBool(false) }
+    }
+}
+
+fn rt_gt(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { return LispBool(a > b) }
+        _ => { return LispBool(false) }
+    }
+}
+
+fn rt_le(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { return LispBool(a <= b) }
+        _ => { return LispBool(false) }
+    }
+}
+
+fn rt_ge(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { return LispBool(a >= b) }
+        _ => { return LispBool(false) }
+    }
+}
+
+fn rt_cons(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(head, Cons(LispList(tail), Nil)) => { return LispList(Cons(head, tail)) }
+        Cons(head, Cons(LispNil, Nil)) => { return LispList(Cons(head, Nil)) }
+        _ => { return LispNil }
+    }
+}
+
+fn rt_car(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispList(Cons(head, _)), Nil) => { return head }
+        _ => { return LispNil }
+    }
+}
+
+fn rt_cdr(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispList(Cons(_, tail)), Nil) => { return LispList(tail) }
+        _ => { return LispNil }
+    }
+}
+
+fn rt_null_p(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispList(Nil), Nil) => { return LispBool(true) }
+        Cons(LispNil, Nil) => { return LispBool(true) }
+        Cons(_, Nil) => { return LispBool(false) }
+        _ => { return LispBool(false) }
+    }
+}
+
+fn rt_pair_p(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispList(Cons(_, _)), Nil) => { return LispBool(true) }
+        Cons(_, Nil) => { return LispBool(false) }
+        _ => { return LispBool(false) }
+    }
+}
+
+fn rt_length(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispList(items), Nil) => { return LispInt(std.list.length(items)) }
+        Cons(LispNil, Nil) => { return LispInt(0i64) }
+        _ => { return LispNil }
+    }
+}
+
+fn rt_not(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(v, Nil) => { return LispBool(not is_truthy(v)) }
+        _ => { return LispNil }
+    }
+}
+
+fn rt_eq_p(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(a, Cons(b, Nil)) => {
+            match (a, b) {
+                (LispNil, LispNil) => { return LispBool(true) }
+                (LispBool(x), LispBool(y)) => { return LispBool(x == y) }
+                (LispInt(x), LispInt(y)) => { return LispBool(x == y) }
+                (LispSymbol(x), LispSymbol(y)) => { return LispBool(x == y) }
+                (LispString(x), LispString(y)) => { return LispBool(x == y) }
+                _ => { return LispBool(false) }
+            }
+        }
+        _ => { return LispBool(false) }
+    }
+}
+
+fn lists_equal_rt(xs: List[LispValue], ys: List[LispValue]) -> bool {
+    match (xs, ys) {
+        (Nil, Nil) => { return true }
+        (Cons(x, xr), Cons(y, yr)) => {
+            if not values_equal_rt(x, y) { return false }
+            return lists_equal_rt(xr, yr)
+        }
+        _ => { return false }
+    }
+}
+
+fn values_equal_rt(a: LispValue, b: LispValue) -> bool {
+    match (a, b) {
+        (LispNil, LispNil) => { return true }
+        (LispBool(x), LispBool(y)) => { return x == y }
+        (LispInt(x), LispInt(y)) => { return x == y }
+        (LispFloat(x), LispFloat(y)) => { return x == y }
+        (LispSymbol(x), LispSymbol(y)) => { return x == y }
+        (LispString(x), LispString(y)) => { return x == y }
+        (LispList(xs), LispList(ys)) => { return lists_equal_rt(xs, ys) }
+        _ => { return false }
+    }
+}
+
+fn rt_equal_p(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(a, Cons(b, Nil)) => { return LispBool(values_equal_rt(a, b)) }
+        _ => { return LispBool(false) }
+    }
+}
+
+fn rt_number_p(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispInt(_), Nil) => { return LispBool(true) }
+        Cons(LispFloat(_), Nil) => { return LispBool(true) }
+        Cons(_, Nil) => { return LispBool(false) }
+        _ => { return LispBool(false) }
+    }
+}
+
+fn rt_string_p(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispString(_), Nil) => { return LispBool(true) }
+        Cons(_, Nil) => { return LispBool(false) }
+        _ => { return LispBool(false) }
+    }
+}
+
+fn rt_symbol_p(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispSymbol(_), Nil) => { return LispBool(true) }
+        Cons(_, Nil) => { return LispBool(false) }
+        _ => { return LispBool(false) }
+    }
+}
+
+fn rt_procedure_p(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(_, Nil) => { return LispBool(false) }
+        _ => { return LispBool(false) }
+    }
+}
+
+fn rt_boolean_p(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispBool(_), Nil) => { return LispBool(true) }
+        Cons(_, Nil) => { return LispBool(false) }
+        _ => { return LispBool(false) }
+    }
+}
+
+fn rt_string_append(args: List[LispValue]) -> LispValue {
+    var sb: StringBuilder = std.builder.new()
+    for arg in args {
+        match arg {
+            LispString(s) => { sb = std.builder.append(sb, s) }
+            _ => { return LispNil }
+        }
+    }
+    return LispString(std.builder.build(sb))
+}
+
+fn rt_string_length(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispString(s), Nil) => { return LispInt(std.string.length(s)) }
+        _ => { return LispNil }
+    }
+}
+
+fn rt_number_to_string(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispInt(n), Nil) => { return LispString(to_string(n)) }
+        Cons(LispFloat(n), Nil) => { return LispString(to_string(n)) }
+        _ => { return LispNil }
+    }
+}
+
+fn rt_string_to_number(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispString(s), Nil) => {
+            match std.string.parse_int(s) {
+                Some(n) => { return LispInt(n) }
+                None => {
+                    match std.string.parse_float(s) {
+                        Some(f) => { return LispFloat(f) }
+                        None => { return LispBool(false) }
+                    }
+                }
+            }
+        }
+        _ => { return LispNil }
+    }
+}
+
+fn rt_abs(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispInt(n), Nil) => { if n < 0i64 { return LispInt(0i64 - n) } else { return LispInt(n) } }
+        Cons(LispFloat(n), Nil) => { if n < 0.0 { return LispFloat(0.0 - n) } else { return LispFloat(n) } }
+        _ => { return LispNil }
+    }
+}
+
+fn rt_min(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { if a < b { return LispInt(a) } else { return LispInt(b) } }
+        _ => { return LispNil }
+    }
+}
+
+fn rt_max(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { if a > b { return LispInt(a) } else { return LispInt(b) } }
+        _ => { return LispNil }
+    }
+}
+
+effect fn rt_display(args: List[LispValue]) -> LispValue {
+    match args {
+        Cons(v, Nil) => {
+            match v {
+                LispString(s) => { std.io.print(s) }
+                _ => { std.io.print(lisp_to_string(v)) }
+            }
+            return LispNil
+        }
+        _ => { return LispNil }
+    }
+}
+
+effect fn rt_newline() -> LispValue {
+    std.io.println("")
+    return LispNil
+}
+
+// User-defined functions
+fn factorial(n: LispValue) -> LispValue {
+    return (fn() -> LispValue { match is_truthy(rt_le(Cons(n, Cons(LispInt(1i64), Nil)))) { true => { return LispInt(1i64) } false => { return rt_mul(Cons(n, Cons(factorial(rt_sub(Cons(n, Cons(LispInt(1i64), Nil)))), Nil))) } } })()
+}
+
+effect fn main() -> void {
+    let _: LispValue = rt_display(Cons(LispString("Factorial of 10: "), Nil))
+    let _: LispValue = rt_display(Cons(factorial(LispInt(10i64)), Nil))
+    let _: LispValue = rt_newline()
+}
