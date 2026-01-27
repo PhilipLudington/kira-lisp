@@ -483,22 +483,16 @@ fn lisp_to_string(v: LispValue) -> string {
         LispString(s) => { return "\"" + s + "\"" }
         LispSymbol(s) => { return s }
         LispList(items) => {
-            // Workaround for Kira bug: for loop on empty List[RecursiveType] crashes
-            match items {
-                Nil => { return "()" }
-                _ => {
-                    var sb: StringBuilder = std.builder.new()
-                    sb = std.builder.append(sb, "(")
-                    var first: bool = true
-                    for item in items {
-                        if not first { sb = std.builder.append(sb, " ") }
-                        sb = std.builder.append(sb, lisp_to_string(item))
-                        first = false
-                    }
-                    sb = std.builder.append(sb, ")")
-                    return std.builder.build(sb)
-                }
+            var sb: StringBuilder = std.builder.new()
+            sb = std.builder.append(sb, "(")
+            var first: bool = true
+            for item in items {
+                if not first { sb = std.builder.append(sb, " ") }
+                sb = std.builder.append(sb, lisp_to_string(item))
+                first = false
             }
+            sb = std.builder.append(sb, ")")
+            return std.builder.build(sb)
         }
         LispLambda(params, _, _) => {
             var sb: StringBuilder = std.builder.new()
@@ -623,20 +617,14 @@ fn eval_define(args: List[LispValue], env: Env) -> EvalResult {
 }
 
 fn extract_param_names(params: List[LispValue]) -> Result[List[string], string] {
-    // Workaround for Kira bug: for loop on empty List[RecursiveType] crashes
-    match params {
-        Nil => { return Ok(Nil) }
-        _ => {
-            var names: List[string] = Nil
-            for p in params {
-                match p {
-                    LispSymbol(name) => { names = Cons(name, names) }
-                    _ => { return Err("Parameter must be a symbol") }
-                }
-            }
-            return Ok(std.list.reverse(names))
+    var names: List[string] = Nil
+    for p in params {
+        match p {
+            LispSymbol(name) => { names = Cons(name, names) }
+            _ => { return Err("Parameter must be a symbol") }
         }
     }
+    return Ok(std.list.reverse(names))
 }
 
 fn make_begin(body: List[LispValue]) -> LispValue {
@@ -665,21 +653,15 @@ fn eval_let(args: List[LispValue], env: Env) -> EvalResult {
     match args {
         Cons(LispList(bindings), body) => {
             var let_env: Env = env_extend(env)
-            // Workaround for Kira bug: for loop on empty List[RecursiveType] crashes
-            match bindings {
-                Nil => { }
-                _ => {
-                    for binding in bindings {
-                        match binding {
-                            LispList(Cons(LispSymbol(name), Cons(value_expr, Nil))) => {
-                                match eval(value_expr, env) {
-                                    EvalOk(value, _) => { let_env = env_define(let_env, name, value) }
-                                    EvalErr(msg) => { return EvalErr(msg) }
-                                }
-                            }
-                            _ => { return EvalErr("let: invalid binding") }
+            for binding in bindings {
+                match binding {
+                    LispList(Cons(LispSymbol(name), Cons(value_expr, Nil))) => {
+                        match eval(value_expr, env) {
+                            EvalOk(value, _) => { let_env = env_define(let_env, name, value) }
+                            EvalErr(msg) => { return EvalErr(msg) }
                         }
                     }
+                    _ => { return EvalErr("let: invalid binding") }
                 }
             }
             return eval_begin_list(body, let_env)
@@ -693,24 +675,18 @@ fn eval_begin(args: List[LispValue], env: Env) -> EvalResult {
 }
 
 fn eval_begin_list(exprs: List[LispValue], env: Env) -> EvalResult {
-    // Workaround for Kira bug: for loop on empty List[RecursiveType] crashes
-    match exprs {
-        Nil => { return EvalOk(LispNil, env) }
-        _ => {
-            var current_env: Env = env
-            var result: LispValue = LispNil
-            for expr in exprs {
-                match eval(expr, current_env) {
-                    EvalOk(value, new_env) => {
-                        result = value
-                        current_env = new_env
-                    }
-                    EvalErr(msg) => { return EvalErr(msg) }
-                }
+    var current_env: Env = env
+    var result: LispValue = LispNil
+    for expr in exprs {
+        match eval(expr, current_env) {
+            EvalOk(value, new_env) => {
+                result = value
+                current_env = new_env
             }
-            return EvalOk(result, current_env)
+            EvalErr(msg) => { return EvalErr(msg) }
         }
     }
+    return EvalOk(result, current_env)
 }
 
 fn eval_set(args: List[LispValue], env: Env) -> EvalResult {
@@ -731,45 +707,33 @@ fn eval_set(args: List[LispValue], env: Env) -> EvalResult {
 }
 
 fn eval_and(args: List[LispValue], env: Env) -> EvalResult {
-    // Workaround for Kira bug: for loop on empty List[RecursiveType] crashes
-    match args {
-        Nil => { return EvalOk(LispBool(true), env) }
-        _ => {
-            var current_env: Env = env
-            var result: LispValue = LispBool(true)
-            for arg in args {
-                match eval(arg, current_env) {
-                    EvalOk(value, new_env) => {
-                        current_env = new_env
-                        if not is_truthy(value) { return EvalOk(LispBool(false), current_env) }
-                        result = value
-                    }
-                    EvalErr(msg) => { return EvalErr(msg) }
-                }
+    var current_env: Env = env
+    var result: LispValue = LispBool(true)
+    for arg in args {
+        match eval(arg, current_env) {
+            EvalOk(value, new_env) => {
+                current_env = new_env
+                if not is_truthy(value) { return EvalOk(LispBool(false), current_env) }
+                result = value
             }
-            return EvalOk(result, current_env)
+            EvalErr(msg) => { return EvalErr(msg) }
         }
     }
+    return EvalOk(result, current_env)
 }
 
 fn eval_or(args: List[LispValue], env: Env) -> EvalResult {
-    // Workaround for Kira bug: for loop on empty List[RecursiveType] crashes
-    match args {
-        Nil => { return EvalOk(LispBool(false), env) }
-        _ => {
-            var current_env: Env = env
-            for arg in args {
-                match eval(arg, current_env) {
-                    EvalOk(value, new_env) => {
-                        current_env = new_env
-                        if is_truthy(value) { return EvalOk(value, current_env) }
-                    }
-                    EvalErr(msg) => { return EvalErr(msg) }
-                }
+    var current_env: Env = env
+    for arg in args {
+        match eval(arg, current_env) {
+            EvalOk(value, new_env) => {
+                current_env = new_env
+                if is_truthy(value) { return EvalOk(value, current_env) }
             }
-            return EvalOk(LispBool(false), current_env)
+            EvalErr(msg) => { return EvalErr(msg) }
         }
     }
+    return EvalOk(LispBool(false), current_env)
 }
 
 effect fn eval_application(op_expr: LispValue, args: List[LispValue], env: Env) -> EvalResult {
@@ -785,24 +749,18 @@ effect fn eval_application(op_expr: LispValue, args: List[LispValue], env: Env) 
 }
 
 effect fn eval_list_values(exprs: List[LispValue], env: Env) -> Result[(List[LispValue], Env), string] {
-    // Workaround for Kira bug: for loop on empty List[RecursiveType] crashes
-    match exprs {
-        Nil => { return Ok((Nil, env)) }
-        _ => {
-            var current_env: Env = env
-            var values: List[LispValue] = Nil
-            for expr in exprs {
-                match eval(expr, current_env) {
-                    EvalOk(value, new_env) => {
-                        values = Cons(value, values)
-                        current_env = new_env
-                    }
-                    EvalErr(msg) => { return Err(msg) }
-                }
+    var current_env: Env = env
+    var values: List[LispValue] = Nil
+    for expr in exprs {
+        match eval(expr, current_env) {
+            EvalOk(value, new_env) => {
+                values = Cons(value, values)
+                current_env = new_env
             }
-            return Ok((std.list.reverse(values), current_env))
+            EvalErr(msg) => { return Err(msg) }
         }
     }
+    return Ok((std.list.reverse(values), current_env))
 }
 
 effect fn apply(func: LispValue, args: List[LispValue], env: Env) -> EvalResult {
@@ -892,29 +850,23 @@ effect fn builtin_newline(args: List[LispValue], env: Env) -> EvalResult {
 }
 
 fn builtin_add(args: List[LispValue], env: Env) -> EvalResult {
-    // Workaround for Kira bug: for loop on empty List[RecursiveType] crashes
-    match args {
-        Nil => { return EvalOk(LispInt(0i64), env) }
-        _ => {
-            var sum_int: i64 = 0i64
-            var sum_float: f64 = 0.0
-            var is_float: bool = false
-            for arg in args {
-                match arg {
-                    LispInt(n) => { if is_float { sum_float = sum_float + to_float(n) } else { sum_int = sum_int + n } }
-                    LispFloat(n) => {
-                        if not is_float {
-                            is_float = true
-                            sum_float = to_float(sum_int)
-                        }
-                        sum_float = sum_float + n
-                    }
-                    _ => { return EvalErr("+: expected number") }
+    var sum_int: i64 = 0i64
+    var sum_float: f64 = 0.0
+    var is_float: bool = false
+    for arg in args {
+        match arg {
+            LispInt(n) => { if is_float { sum_float = sum_float + to_float(n) } else { sum_int = sum_int + n } }
+            LispFloat(n) => {
+                if not is_float {
+                    is_float = true
+                    sum_float = to_float(sum_int)
                 }
+                sum_float = sum_float + n
             }
-            if is_float { return EvalOk(LispFloat(sum_float), env) } else { return EvalOk(LispInt(sum_int), env) }
+            _ => { return EvalErr("+: expected number") }
         }
     }
+    if is_float { return EvalOk(LispFloat(sum_float), env) } else { return EvalOk(LispInt(sum_int), env) }
 }
 
 fn builtin_sub(args: List[LispValue], env: Env) -> EvalResult {
@@ -960,29 +912,23 @@ fn builtin_sub(args: List[LispValue], env: Env) -> EvalResult {
 }
 
 fn builtin_mul(args: List[LispValue], env: Env) -> EvalResult {
-    // Workaround for Kira bug: for loop on empty List[RecursiveType] crashes
-    match args {
-        Nil => { return EvalOk(LispInt(1i64), env) }
-        _ => {
-            var prod_int: i64 = 1i64
-            var prod_float: f64 = 1.0
-            var is_float: bool = false
-            for arg in args {
-                match arg {
-                    LispInt(n) => { if is_float { prod_float = prod_float * to_float(n) } else { prod_int = prod_int * n } }
-                    LispFloat(n) => {
-                        if not is_float {
-                            is_float = true
-                            prod_float = to_float(prod_int)
-                        }
-                        prod_float = prod_float * n
-                    }
-                    _ => { return EvalErr("*: expected number") }
+    var prod_int: i64 = 1i64
+    var prod_float: f64 = 1.0
+    var is_float: bool = false
+    for arg in args {
+        match arg {
+            LispInt(n) => { if is_float { prod_float = prod_float * to_float(n) } else { prod_int = prod_int * n } }
+            LispFloat(n) => {
+                if not is_float {
+                    is_float = true
+                    prod_float = to_float(prod_int)
                 }
+                prod_float = prod_float * n
             }
-            if is_float { return EvalOk(LispFloat(prod_float), env) } else { return EvalOk(LispInt(prod_int), env) }
+            _ => { return EvalErr("*: expected number") }
         }
     }
+    if is_float { return EvalOk(LispFloat(prod_float), env) } else { return EvalOk(LispInt(prod_int), env) }
 }
 
 fn builtin_div(args: List[LispValue], env: Env) -> EvalResult {
@@ -1189,20 +1135,14 @@ fn builtin_not(args: List[LispValue], env: Env) -> EvalResult {
 }
 
 fn builtin_string_append(args: List[LispValue], env: Env) -> EvalResult {
-    // Workaround for Kira bug: for loop on empty List[RecursiveType] crashes
-    match args {
-        Nil => { return EvalOk(LispString(""), env) }
-        _ => {
-            var sb: StringBuilder = std.builder.new()
-            for arg in args {
-                match arg {
-                    LispString(s) => { sb = std.builder.append(sb, s) }
-                    _ => { return EvalErr("string-append: requires strings") }
-                }
-            }
-            return EvalOk(LispString(std.builder.build(sb)), env)
+    var sb: StringBuilder = std.builder.new()
+    for arg in args {
+        match arg {
+            LispString(s) => { sb = std.builder.append(sb, s) }
+            _ => { return EvalErr("string-append: requires strings") }
         }
     }
+    return EvalOk(LispString(std.builder.build(sb)), env)
 }
 
 fn builtin_string_length(args: List[LispValue], env: Env) -> EvalResult {
@@ -1502,25 +1442,19 @@ fn to_ir_let(args: List[LispValue]) -> TransformResult {
 }
 
 fn to_ir_let_bindings(bindings: List[LispValue]) -> TransformListResult {
-    // Workaround for Kira bug: for loop on empty List[RecursiveType] crashes
-    match bindings {
-        Nil => { return TransformListOk(Nil) }
-        _ => {
-            var ir_exprs: List[IRExpr] = Nil
-            for binding in bindings {
-                match binding {
-                    LispList(Cons(LispSymbol(_), Cons(value_expr, Nil))) => {
-                        match to_ir(value_expr) {
-                            TransformOk(ir_value) => { ir_exprs = Cons(ir_value, ir_exprs) }
-                            TransformErr(msg) => { return TransformListErr(msg) }
-                        }
-                    }
-                    _ => { return TransformListErr("let: invalid binding") }
+    var ir_exprs: List[IRExpr] = Nil
+    for binding in bindings {
+        match binding {
+            LispList(Cons(LispSymbol(_), Cons(value_expr, Nil))) => {
+                match to_ir(value_expr) {
+                    TransformOk(ir_value) => { ir_exprs = Cons(ir_value, ir_exprs) }
+                    TransformErr(msg) => { return TransformListErr(msg) }
                 }
             }
-            return TransformListOk(std.list.reverse(ir_exprs))
+            _ => { return TransformListErr("let: invalid binding") }
         }
     }
+    return TransformListOk(std.list.reverse(ir_exprs))
 }
 
 fn reconstruct_bindings(bindings: List[LispValue], ir_exprs: List[IRExpr]) -> List[(string, IRExpr)] {
@@ -1593,20 +1527,14 @@ fn to_ir_app(func: LispValue, args: List[LispValue]) -> TransformResult {
 }
 
 fn to_ir_list_exprs(exprs: List[LispValue]) -> TransformListResult {
-    // Workaround for Kira bug: for loop on empty List[RecursiveType] crashes
-    match exprs {
-        Nil => { return TransformListOk(Nil) }
-        _ => {
-            var result: List[IRExpr] = Nil
-            for expr in exprs {
-                match to_ir(expr) {
-                    TransformOk(ir_expr) => { result = Cons(ir_expr, result) }
-                    TransformErr(msg) => { return TransformListErr(msg) }
-                }
-            }
-            return TransformListOk(std.list.reverse(result))
+    var result: List[IRExpr] = Nil
+    for expr in exprs {
+        match to_ir(expr) {
+            TransformOk(ir_expr) => { result = Cons(ir_expr, result) }
+            TransformErr(msg) => { return TransformListErr(msg) }
         }
     }
+    return TransformListOk(std.list.reverse(result))
 }
 
 fn to_ir_program(exprs: List[LispValue]) -> TransformListResult {
@@ -1717,12 +1645,9 @@ fn codegen_expr(ir: IRExpr) -> string {
         IRVar(name) => { return mangle_name(name) }
         IRQuote(v) => { return codegen_lisp_value(v) }
         IRIf(cond, then_expr, else_expr) => {
-            // Kira's if is a statement. For if-expression semantics, use a helper function
-            // that uses match internally with return statements
-            // Generate: (fn() -> LispValue { match is_truthy(cond) { true => { return then } false => { return else } } })()
-            return "(fn() -> LispValue { match is_truthy(" + codegen_expr(cond) + ") { true => { return " +
-                   codegen_expr(then_expr) + " } false => { return " +
-                   codegen_expr(else_expr) + " } } })()"
+            return "if is_truthy(" + codegen_expr(cond) + ") { " +
+                   codegen_expr(then_expr) + " } else { " +
+                   codegen_expr(else_expr) + " }"
         }
         IRLet(bindings, body) => {
             var sb: StringBuilder = std.builder.new()
@@ -1762,16 +1687,10 @@ fn codegen_expr(ir: IRExpr) -> string {
                     sb = std.builder.append(sb, mangle_name(name))
                     sb = std.builder.append(sb, "(")
                     var first: bool = true
-                    // Workaround for Kira bug
-                    match args {
-                        Nil => { }
-                        _ => {
-                            for arg in args {
-                                if not first { sb = std.builder.append(sb, ", ") }
-                                sb = std.builder.append(sb, codegen_expr(arg))
-                                first = false
-                            }
-                        }
+                    for arg in args {
+                        if not first { sb = std.builder.append(sb, ", ") }
+                        sb = std.builder.append(sb, codegen_expr(arg))
+                        first = false
                     }
                     sb = std.builder.append(sb, ")")
                     return std.builder.build(sb)
@@ -1784,15 +1703,10 @@ fn codegen_expr(ir: IRExpr) -> string {
                     sb = std.builder.append(sb, codegen_expr(func))
                     sb = std.builder.append(sb, ")(")
                     var first: bool = true
-                    match args {
-                        Nil => { }
-                        _ => {
-                            for arg in args {
-                                if not first { sb = std.builder.append(sb, ", ") }
-                                sb = std.builder.append(sb, codegen_expr(arg))
-                                first = false
-                            }
-                        }
+                    for arg in args {
+                        if not first { sb = std.builder.append(sb, ", ") }
+                        sb = std.builder.append(sb, codegen_expr(arg))
+                        first = false
                     }
                     sb = std.builder.append(sb, ")")
                     return std.builder.build(sb)
@@ -1804,27 +1718,21 @@ fn codegen_expr(ir: IRExpr) -> string {
             return "/* define " + name + " */"
         }
         IRBegin(exprs) => {
-            // Workaround for Kira bug: for loop on empty List[RecursiveType] crashes
-            match exprs {
-                Nil => { return "LispNil" }
-                _ => {
-                    var sb: StringBuilder = std.builder.new()
-                    sb = std.builder.append(sb, "{ ")
-                    var result_var: string = "_result"
-                    sb = std.builder.append(sb, "var ")
-                    sb = std.builder.append(sb, result_var)
-                    sb = std.builder.append(sb, ": LispValue = LispNil; ")
-                    for expr in exprs {
-                        sb = std.builder.append(sb, result_var)
-                        sb = std.builder.append(sb, " = ")
-                        sb = std.builder.append(sb, codegen_expr(expr))
-                        sb = std.builder.append(sb, "; ")
-                    }
-                    sb = std.builder.append(sb, result_var)
-                    sb = std.builder.append(sb, " }")
-                    return std.builder.build(sb)
-                }
+            var sb: StringBuilder = std.builder.new()
+            sb = std.builder.append(sb, "{ ")
+            var result_var: string = "_result"
+            sb = std.builder.append(sb, "var ")
+            sb = std.builder.append(sb, result_var)
+            sb = std.builder.append(sb, ": LispValue = LispNil; ")
+            for expr in exprs {
+                sb = std.builder.append(sb, result_var)
+                sb = std.builder.append(sb, " = ")
+                sb = std.builder.append(sb, codegen_expr(expr))
+                sb = std.builder.append(sb, "; ")
             }
+            sb = std.builder.append(sb, result_var)
+            sb = std.builder.append(sb, " }")
+            return std.builder.build(sb)
         }
         IRSet(name, value) => {
             return "{ " + mangle_name(name) + " = " + codegen_expr(value) + "; LispNil }"
@@ -1996,24 +1904,18 @@ fn codegen_builtin_call(name: string, args: List[IRExpr]) -> string {
 
 // Collect top-level definitions
 fn collect_definitions(ir_exprs: List[IRExpr]) -> (List[(string, IRExpr)], List[IRExpr]) {
-    // Workaround for Kira bug: for loop on empty List[RecursiveType] crashes
-    match ir_exprs {
-        Nil => { return (Nil, Nil) }
-        _ => {
-            var defs: List[(string, IRExpr)] = Nil
-            var others: List[IRExpr] = Nil
-            for ir in ir_exprs {
-                match ir {
-                    IRDefine(name, value) => { defs = Cons((name, value), defs) }
-                    _ => { others = Cons(ir, others) }
-                }
-            }
-            return (std.list.reverse(defs), std.list.reverse(others))
+    var defs: List[(string, IRExpr)] = Nil
+    var others: List[IRExpr] = Nil
+    for ir in ir_exprs {
+        match ir {
+            IRDefine(name, value) => { defs = Cons((name, value), defs) }
+            _ => { others = Cons(ir, others) }
         }
     }
+    return (std.list.reverse(defs), std.list.reverse(others))
 }
 
-// Generate the runtime library using StringBuilder to avoid multi-line string issues
+// Generate the runtime library
 fn generate_runtime() -> string {
     var sb: StringBuilder = std.builder.new()
     let nl: string = "\n"
@@ -2451,55 +2353,42 @@ fn generate_program(ir_exprs: List[IRExpr]) -> string {
 
     // Generate global definitions
     sb = std.builder.append(sb, "// User-defined functions\n")
-    // Workaround for Kira bug: for loop on empty List containing recursive types crashes
-    match defs {
-        Nil => { }
-        _ => {
-            for def in defs {
-                let (name, value): (string, IRExpr) = def
-                match value {
-                    IRLambda(params, body) => {
-                        // Generate as a named function
-                        sb = std.builder.append(sb, "fn ")
-                        sb = std.builder.append(sb, mangle_name(name))
-                        sb = std.builder.append(sb, "(")
-                        var first: bool = true
-                        // params is List[string], not recursive, should be OK
-                        for p in params {
-                            if not first { sb = std.builder.append(sb, ", ") }
-                            sb = std.builder.append(sb, mangle_name(p))
-                            sb = std.builder.append(sb, ": LispValue")
-                            first = false
-                        }
-                        sb = std.builder.append(sb, ") -> LispValue {\n    return ")
-                        sb = std.builder.append(sb, codegen_expr(body))
-                        sb = std.builder.append(sb, "\n}\n\n")
-                    }
-                    _ => {
-                        // Generate as a global variable
-                        sb = std.builder.append(sb, "var ")
-                        sb = std.builder.append(sb, mangle_name(name))
-                        sb = std.builder.append(sb, ": LispValue = ")
-                        sb = std.builder.append(sb, codegen_expr(value))
-                        sb = std.builder.append(sb, "\n\n")
-                    }
+    for def in defs {
+        let (name, value): (string, IRExpr) = def
+        match value {
+            IRLambda(params, body) => {
+                // Generate as a named function
+                sb = std.builder.append(sb, "fn ")
+                sb = std.builder.append(sb, mangle_name(name))
+                sb = std.builder.append(sb, "(")
+                var first: bool = true
+                for p in params {
+                    if not first { sb = std.builder.append(sb, ", ") }
+                    sb = std.builder.append(sb, mangle_name(p))
+                    sb = std.builder.append(sb, ": LispValue")
+                    first = false
                 }
+                sb = std.builder.append(sb, ") -> LispValue {\n    return ")
+                sb = std.builder.append(sb, codegen_expr(body))
+                sb = std.builder.append(sb, "\n}\n\n")
+            }
+            _ => {
+                // Generate as a global variable
+                sb = std.builder.append(sb, "var ")
+                sb = std.builder.append(sb, mangle_name(name))
+                sb = std.builder.append(sb, ": LispValue = ")
+                sb = std.builder.append(sb, codegen_expr(value))
+                sb = std.builder.append(sb, "\n\n")
             }
         }
     }
 
     // Generate main function with top-level expressions
     sb = std.builder.append(sb, "effect fn main() -> void {\n")
-    // Workaround for Kira bug: for loop on empty List[RecursiveType] crashes
-    match others {
-        Nil => { }
-        _ => {
-            for expr in others {
-                sb = std.builder.append(sb, "    let _: LispValue = ")
-                sb = std.builder.append(sb, codegen_expr(expr))
-                sb = std.builder.append(sb, "\n")
-            }
-        }
+    for expr in others {
+        sb = std.builder.append(sb, "    let _: LispValue = ")
+        sb = std.builder.append(sb, codegen_expr(expr))
+        sb = std.builder.append(sb, "\n")
     }
     sb = std.builder.append(sb, "}\n")
 
@@ -2660,17 +2549,62 @@ fn replace_extension(path: string, new_ext: string) -> string {
     }
 }
 
-// To use the compiler, comment out REPL code below and uncomment compile_file
-// Example: compile_file("examples/factorial.lisp", "examples/factorial_compiled.ki")
+fn print_usage() -> void {
+    std.io.println("Usage: kira run src/main.ki [options]")
+    std.io.println("")
+    std.io.println("Options:")
+    std.io.println("  (no args)           Start REPL")
+    std.io.println("  run <file.lisp>     Run a Lisp file")
+    std.io.println("  compile <file.lisp> Compile to Kira (output: <file>.ki)")
+    std.io.println("  help                Show this help")
+}
+
+// Convert args to a standard List (std.env.args() returns an internal type that doesn't pattern match)
+fn convert_args(args: List[string]) -> List[string] {
+    var result: List[string] = Nil
+    for arg in args {
+        result = Cons(arg, result)
+    }
+    return std.list.reverse(result)
+}
 
 effect fn main() -> void {
-    // REPL mode (default)
-    std.io.println("Kira Lisp Interpreter")
-    std.io.println("Type (exit) or (quit) to exit")
-    std.io.println("")
-    let env: Env = make_initial_env()
-    repl_loop(env)
-
-    // Compile mode - uncomment below and comment out REPL code above
-    // compile_file("examples/factorial.lisp", "examples/factorial_compiled.ki")
+    let raw_args: List[string] = std.env.args()
+    let args: List[string] = convert_args(raw_args)
+    match args {
+        Nil => {
+            std.io.println("Kira Lisp Interpreter")
+            std.io.println("Type (exit) or (quit) to exit")
+            std.io.println("")
+            let env: Env = make_initial_env()
+            repl_loop(env)
+        }
+        Cons(cmd, cmd_args) => {
+            if cmd == "help" {
+                print_usage()
+            } else if cmd == "run" {
+                match cmd_args {
+                    Cons(file, _) => { run_file(file) }
+                    Nil => {
+                        std.io.println("Error: run requires a file argument")
+                        print_usage()
+                    }
+                }
+            } else if cmd == "compile" {
+                match cmd_args {
+                    Cons(file, _) => {
+                        let output: string = replace_extension(file, ".ki")
+                        compile_file(file, output)
+                    }
+                    Nil => {
+                        std.io.println("Error: compile requires a file argument")
+                        print_usage()
+                    }
+                }
+            } else {
+                // Assume it's a file to run
+                run_file(cmd)
+            }
+        }
+    }
 }
