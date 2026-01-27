@@ -384,7 +384,7 @@ examples/
 
 ### Stretch Goals
 - [x] Tail call optimization
-- [ ] Macro system (defmacro)
+- [x] Macro system (defmacro, quasiquote)
 - [ ] Module/import system
 - [ ] Source location tracking for errors
 
@@ -419,11 +419,21 @@ The MVP interpreter is fully functional, and the compiler infrastructure (IR, tr
 - `std.string.parse_float()` now exists
 - `to_string()` now works correctly on pattern-extracted values
 
+**2026-01-27 Update (Macros):** Added Common Lisp-style macro system:
+- **Lexer**: Added `TokQuasiquote`, `TokUnquote`, `TokUnquoteSplicing` tokens for `` ` ``, `,`, `,@` syntax
+- **Types**: Added `LispMacro(List[string], LispValue, Env)` variant to `LispValue`
+- **Parser**: Added `parse_quasiquoted`, `parse_unquoted`, `parse_unquote_spliced` functions
+- **Evaluator**: Added `defmacro` special form to define macros
+- **Quasiquote**: Full quasiquote implementation with depth tracking for nested quasiquotes
+- **Unquote-splicing**: Supports `,@` to splice lists into quasiquoted expressions
+- **Macro expansion**: Macros receive unevaluated arguments and return expanded code
+- Example macros: `when`, `unless`, `swap`, `inc!` all work correctly
+
 **Working Features:**
 - Lexer: tokenizes integers, strings, symbols, booleans (#t/#f), parentheses, quotes
 - Parser: recursive descent parser for S-expressions with quote shorthand
 - Evaluator: full evaluation with proper lexical scoping
-- Special forms: `quote`, `if`, `define`, `lambda`, `let`, `begin`, `set!`, `and`, `or`
+- Special forms: `quote`, `quasiquote`, `if`, `define`, `defmacro`, `lambda`, `let`, `begin`, `set!`, `and`, `or`
 - Builtins: arithmetic (`+`, `-`, `*`, `/`, `mod`), comparison (`=`, `<`, `>`, `<=`, `>=`), list ops (`cons`, `car`, `cdr`, `list`, `null?`, `pair?`, `length`), type predicates, equality, string operations, I/O (`display`, `newline`)
 - Recursive functions work correctly
 - Higher-order functions (map, filter patterns) work

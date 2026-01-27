@@ -9,6 +9,9 @@ type Token =
     | TokLParen
     | TokRParen
     | TokQuote
+    | TokQuasiquote
+    | TokUnquote
+    | TokUnquoteSplicing
     | TokInt(i64)
     | TokFloat(f64)
     | TokString(string)
@@ -34,6 +37,7 @@ type LispValue =
     | LispList(List[LispValue])
     | LispLambda(List[string], LispValue, Env)
     | LispBuiltin(string)
+    | LispMacro(List[string], LispValue, Env)
 
 type Env = {
     bindings: HashMap,
@@ -249,6 +253,14 @@ fn next_token(lex: Lexer) -> Result[(Lexer, Token), (string, i32)] {
     if c == '(' { return Ok((advance(current), TokLParen)) }
     if c == ')' { return Ok((advance(current), TokRParen)) }
     if c == '\'' { return Ok((advance(current), TokQuote)) }
+    if c == '`' { return Ok((advance(current), TokQuasiquote)) }
+    if c == ',' {
+        let next: char = peek_char(current, 1)
+        if next == '@' {
+            return Ok((advance(advance(current)), TokUnquoteSplicing))
+        }
+        return Ok((advance(current), TokUnquote))
+    }
     if c == '"' { return read_string(current) }
 
     if c == '#' {
@@ -308,6 +320,9 @@ fn parse_expr(tokens: List[Token]) -> ParseResult {
                 TokLParen => { return parse_list(rest) }
                 TokRParen => { return ParseErr("Unexpected )") }
                 TokQuote => { return parse_quoted(rest) }
+                TokQuasiquote => { return parse_quasiquoted(rest) }
+                TokUnquote => { return parse_unquoted(rest) }
+                TokUnquoteSplicing => { return parse_unquote_spliced(rest) }
                 TokEOF => { return ParseErr("Unexpected EOF") }
             }
         }
@@ -348,6 +363,39 @@ fn parse_quoted(tokens: List[Token]) -> ParseResult {
             let quote_sym: LispValue = LispSymbol("quote")
             let quoted: LispValue = LispList(Cons(quote_sym, Cons(value, Nil)))
             return ParseOk(quoted, rest)
+        }
+        ParseErr(msg) => { return ParseErr(msg) }
+    }
+}
+
+fn parse_quasiquoted(tokens: List[Token]) -> ParseResult {
+    match parse_expr(tokens) {
+        ParseOk(value, rest) => {
+            let qq_sym: LispValue = LispSymbol("quasiquote")
+            let quoted: LispValue = LispList(Cons(qq_sym, Cons(value, Nil)))
+            return ParseOk(quoted, rest)
+        }
+        ParseErr(msg) => { return ParseErr(msg) }
+    }
+}
+
+fn parse_unquoted(tokens: List[Token]) -> ParseResult {
+    match parse_expr(tokens) {
+        ParseOk(value, rest) => {
+            let uq_sym: LispValue = LispSymbol("unquote")
+            let unquoted: LispValue = LispList(Cons(uq_sym, Cons(value, Nil)))
+            return ParseOk(unquoted, rest)
+        }
+        ParseErr(msg) => { return ParseErr(msg) }
+    }
+}
+
+fn parse_unquote_spliced(tokens: List[Token]) -> ParseResult {
+    match parse_expr(tokens) {
+        ParseOk(value, rest) => {
+            let uqs_sym: LispValue = LispSymbol("unquote-splicing")
+            let spliced: LispValue = LispList(Cons(uqs_sym, Cons(value, Nil)))
+            return ParseOk(spliced, rest)
         }
         ParseErr(msg) => { return ParseErr(msg) }
     }
@@ -508,6 +556,18 @@ fn lisp_to_string(v: LispValue) -> string {
             return std.builder.build(sb)
         }
         LispBuiltin(name) => { return "#<builtin:" + name + ">" }
+        LispMacro(params, _, _) => {
+            var sb: StringBuilder = std.builder.new()
+            sb = std.builder.append(sb, "#<macro (")
+            var first: bool = true
+            for p in params {
+                if not first { sb = std.builder.append(sb, " ") }
+                sb = std.builder.append(sb, p)
+                first = false
+            }
+            sb = std.builder.append(sb, ")>")
+            return std.builder.build(sb)
+        }
     }
 }
 
@@ -562,6 +622,7 @@ effect fn eval(expr: LispValue, env: Env) -> EvalResult {
         }
         LispLambda(p, b, e) => { return EvalOk(LispLambda(p, b, e), env) }
         LispBuiltin(n) => { return EvalOk(LispBuiltin(n), env) }
+        LispMacro(p, b, e) => { return EvalOk(LispMacro(p, b, e), env) }
     }
 }
 
@@ -569,6 +630,8 @@ effect fn eval_list(first: LispValue, rest: List[LispValue], env: Env) -> EvalRe
     match first {
         LispSymbol(name) => {
             if name == "quote" { return eval_quote(rest, env) }
+            if name == "quasiquote" { return eval_quasiquote(rest, env) }
+            if name == "defmacro" { return eval_defmacro(rest, env) }
             if name == "if" { return eval_if(rest, env) }
             if name == "define" { return eval_define(rest, env) }
             if name == "lambda" { return eval_lambda(rest, env) }
@@ -577,6 +640,11 @@ effect fn eval_list(first: LispValue, rest: List[LispValue], env: Env) -> EvalRe
             if name == "set!" { return eval_set(rest, env) }
             if name == "and" { return eval_and(rest, env) }
             if name == "or" { return eval_or(rest, env) }
+            // Check if it's a macro call
+            match env_lookup(env, name) {
+                Some(LispMacro(_, _, _)) => { return eval_macro_call(name, rest, env) }
+                _ => { }
+            }
             return eval_application(first, rest, env)
         }
         _ => { return eval_application(first, rest, env) }
@@ -587,6 +655,179 @@ fn eval_quote(args: List[LispValue], env: Env) -> EvalResult {
     match args {
         Cons(value, Nil) => { return EvalOk(value, env) }
         _ => { return EvalErr("quote requires one argument") }
+    }
+}
+
+// ============================================================================
+// Quasiquote Evaluation
+// ============================================================================
+
+effect fn eval_quasiquote(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(expr, Nil) => {
+            return eval_qq(expr, 1, env)
+        }
+        _ => { return EvalErr("quasiquote requires one argument") }
+    }
+}
+
+// Recursively process quasiquoted expression with depth tracking
+effect fn eval_qq(expr: LispValue, depth: i32, env: Env) -> EvalResult {
+    match expr {
+        LispList(items) => {
+            match items {
+                Nil => { return EvalOk(LispList(Nil), env) }
+                Cons(first, rest) => {
+                    // Check for special forms
+                    match first {
+                        LispSymbol(name) => {
+                            if name == "unquote" {
+                                if depth == 1 {
+                                    // At depth 1, evaluate the unquoted expression
+                                    match rest {
+                                        Cons(unq_expr, Nil) => {
+                                            return trampoline(eval(unq_expr, env))
+                                        }
+                                        _ => { return EvalErr("unquote requires one argument") }
+                                    }
+                                } else {
+                                    // Nested unquote - decrement depth and recurse
+                                    return eval_qq_list(items, depth - 1, env)
+                                }
+                            }
+                            if name == "quasiquote" {
+                                // Nested quasiquote - increment depth
+                                return eval_qq_list(items, depth + 1, env)
+                            }
+                            if name == "unquote-splicing" {
+                                // unquote-splicing at top level of list is an error
+                                return EvalErr("unquote-splicing not in list context")
+                            }
+                            // Regular list - process elements with splicing support
+                            return eval_qq_list(items, depth, env)
+                        }
+                        _ => {
+                            // Regular list - process elements with splicing support
+                            return eval_qq_list(items, depth, env)
+                        }
+                    }
+                }
+            }
+        }
+        // Non-list values are returned as-is (like quote)
+        _ => { return EvalOk(expr, env) }
+    }
+}
+
+// Process list elements, handling unquote-splicing
+effect fn eval_qq_list(items: List[LispValue], depth: i32, env: Env) -> EvalResult {
+    var result: List[LispValue] = Nil
+    var current: List[LispValue] = items
+
+    loop {
+        match current {
+            Nil => { break }
+            Cons(item, rest) => {
+                // Check if this item is (unquote-splicing expr) at depth 1
+                match item {
+                    LispList(Cons(LispSymbol(name), splice_rest)) => {
+                        if name == "unquote-splicing" and depth == 1 {
+                            match splice_rest {
+                                Cons(splice_expr, Nil) => {
+                                    // Evaluate the expression
+                                    match trampoline(eval(splice_expr, env)) {
+                                        EvalOk(splice_val, _) => {
+                                            // Splice the list into result
+                                            match splice_val {
+                                                LispList(splice_items) => {
+                                                    // Add each item from spliced list
+                                                    for splice_item in splice_items {
+                                                        result = Cons(splice_item, result)
+                                                    }
+                                                }
+                                                _ => { return EvalErr("unquote-splicing requires a list") }
+                                            }
+                                        }
+                                        EvalErr(msg) => { return EvalErr(msg) }
+                                        TailCall(_, _, _) => { return EvalErr("Internal error") }
+                                    }
+                                    current = rest
+                                }
+                                _ => { return EvalErr("unquote-splicing requires one argument") }
+                            }
+                        } else {
+                            // Regular item - recursively process
+                            match eval_qq(item, depth, env) {
+                                EvalOk(val, _) => {
+                                    result = Cons(val, result)
+                                    current = rest
+                                }
+                                EvalErr(msg) => { return EvalErr(msg) }
+                                TailCall(_, _, _) => { return EvalErr("Internal error") }
+                            }
+                        }
+                    }
+                    _ => {
+                        // Regular item - recursively process
+                        match eval_qq(item, depth, env) {
+                            EvalOk(val, _) => {
+                                result = Cons(val, result)
+                                current = rest
+                            }
+                            EvalErr(msg) => { return EvalErr(msg) }
+                            TailCall(_, _, _) => { return EvalErr("Internal error") }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return EvalOk(LispList(std.list.reverse(result)), env)
+}
+
+// ============================================================================
+// Macro Definition and Expansion
+// ============================================================================
+
+fn eval_defmacro(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(LispSymbol(name), Cons(LispList(params), body)) => {
+            match extract_param_names(params) {
+                Ok(param_names) => {
+                    let macro_body: LispValue = make_begin(body)
+                    let macro_val: LispValue = LispMacro(param_names, macro_body, env)
+                    let new_env: Env = env_define(env, name, macro_val)
+                    return EvalOk(LispNil, new_env)
+                }
+                Err(msg) => { return EvalErr(msg) }
+            }
+        }
+        _ => { return EvalErr("defmacro: invalid syntax - expected (defmacro name (params...) body...)") }
+    }
+}
+
+effect fn eval_macro_call(name: string, args: List[LispValue], env: Env) -> EvalResult {
+    match env_lookup(env, name) {
+        Some(LispMacro(params, body, macro_env)) => {
+            // Bind unevaluated args to params (macros don't evaluate arguments)
+            let call_env: Env = env_extend(macro_env)
+            match env_define_all(call_env, params, args) {
+                Ok(bound_env) => {
+                    // Evaluate macro body to get expanded form
+                    match trampoline(eval(body, bound_env)) {
+                        EvalOk(expanded, _) => {
+                            // Evaluate expanded form in the caller's environment
+                            return eval(expanded, env)
+                        }
+                        EvalErr(msg) => { return EvalErr("Macro expansion error: " + msg) }
+                        TailCall(_, _, _) => { return EvalErr("Internal error") }
+                    }
+                }
+                Err(msg) => { return EvalErr(msg) }
+            }
+        }
+        _ => { return EvalErr("Not a macro: " + name) }
     }
 }
 
