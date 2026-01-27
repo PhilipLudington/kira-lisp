@@ -1,0 +1,344 @@
+// Lexer for Lisp source code
+// Task 1.2: Define Token Types
+// Task 1.3: Implement Lexer
+
+// Token types for the lexer
+type Token =
+    | TokLParen
+    | TokRParen
+    | TokQuote
+    | TokInt(i64)
+    | TokFloat(f64)
+    | TokString(string)
+    | TokSymbol(string)
+    | TokBool(bool)
+    | TokEOF
+
+// Result of tokenization
+type LexResult =
+    | LexOk(List[Token])
+    | LexErr(string, i32)
+
+// Internal lexer state
+type Lexer = {
+    input: string,
+    pos: i32,
+    length: i32
+}
+
+// Create a new lexer
+fn lexer_new(input: string) -> Lexer {
+    return Lexer {
+        input: input,
+        pos: 0,
+        length: std.string.length(input)
+    }
+}
+
+// Check if we're at end of input
+fn is_at_end(lex: Lexer) -> bool {
+    return lex.pos >= lex.length
+}
+
+// Get current character (or '\0' if at end)
+fn current_char(lex: Lexer) -> char {
+    if is_at_end(lex) {
+        return '\0'
+    }
+    return std.string.char_at(lex.input, lex.pos)
+}
+
+// Peek at character at offset from current position
+fn peek_char(lex: Lexer, offset: i32) -> char {
+    let idx: i32 = lex.pos + offset
+    if idx >= lex.length {
+        return '\0'
+    }
+    return std.string.char_at(lex.input, idx)
+}
+
+// Advance the lexer position by one
+fn advance(lex: Lexer) -> Lexer {
+    return Lexer {
+        input: lex.input,
+        pos: lex.pos + 1,
+        length: lex.length
+    }
+}
+
+// Skip whitespace and comments
+fn skip_whitespace_and_comments(lex: Lexer) -> Lexer {
+    var current: Lexer = lex
+    loop {
+        if is_at_end(current) {
+            break
+        }
+        let c: char = current_char(current)
+        if c == ' ' or c == '\t' or c == '\n' or c == '\r' {
+            current = advance(current)
+        } else if c == ';' {
+            // Skip comment until end of line
+            while not is_at_end(current) and current_char(current) != '\n' {
+                current = advance(current)
+            }
+        } else {
+            break
+        }
+    }
+    return current
+}
+
+// Check if character is a digit
+fn is_digit(c: char) -> bool {
+    return c >= '0' and c <= '9'
+}
+
+// Check if character can start a symbol
+fn is_symbol_start(c: char) -> bool {
+    return (c >= 'a' and c <= 'z') or
+           (c >= 'A' and c <= 'Z') or
+           c == '+' or c == '-' or c == '*' or c == '/' or
+           c == '<' or c == '>' or c == '=' or c == '!' or
+           c == '?' or c == '_' or c == '&' or c == '%' or
+           c == '^' or c == '~' or c == '@' or c == '$'
+}
+
+// Check if character can be part of a symbol
+fn is_symbol_char(c: char) -> bool {
+    return is_symbol_start(c) or is_digit(c) or c == '.' or c == ':'
+}
+
+// Read a number (integer or float)
+fn read_number(lex: Lexer) -> (Lexer, Token) {
+    var current: Lexer = lex
+    let start: i32 = current.pos
+    var has_dot: bool = false
+    var has_exp: bool = false
+
+    // Handle optional leading sign
+    let first: char = current_char(current)
+    if first == '+' or first == '-' {
+        current = advance(current)
+    }
+
+    // Read digits before decimal point
+    while not is_at_end(current) and is_digit(current_char(current)) {
+        current = advance(current)
+    }
+
+    // Check for decimal point
+    if not is_at_end(current) and current_char(current) == '.' {
+        let next: char = peek_char(current, 1)
+        if is_digit(next) {
+            has_dot = true
+            current = advance(current)
+            while not is_at_end(current) and is_digit(current_char(current)) {
+                current = advance(current)
+            }
+        }
+    }
+
+    // Check for exponent
+    if not is_at_end(current) {
+        let exp_char: char = current_char(current)
+        if exp_char == 'e' or exp_char == 'E' {
+            has_exp = true
+            current = advance(current)
+            let sign: char = current_char(current)
+            if sign == '+' or sign == '-' {
+                current = advance(current)
+            }
+            while not is_at_end(current) and is_digit(current_char(current)) {
+                current = advance(current)
+            }
+        }
+    }
+
+    let num_str: string = std.string.substring(lex.input, start, current.pos)
+
+    if has_dot or has_exp {
+        match std.string.parse_float(num_str) {
+            Some(f) => { return (current, TokFloat(f)) }
+            None => { return (current, TokFloat(0.0)) }
+        }
+    } else {
+        match std.string.parse_int(num_str) {
+            Some(n) => { return (current, TokInt(to_i64(n))) }
+            None => { return (current, TokInt(0i64)) }
+        }
+    }
+}
+
+// Read a string literal
+fn read_string(lex: Lexer) -> Result[(Lexer, Token), (string, i32)] {
+    var current: Lexer = advance(lex)  // Skip opening quote
+    var sb: StringBuilder = std.builder.new()
+
+    while not is_at_end(current) {
+        let c: char = current_char(current)
+        if c == '"' {
+            current = advance(current)
+            return Ok((current, TokString(std.builder.build(sb))))
+        } else if c == '\\' {
+            current = advance(current)
+            if is_at_end(current) {
+                return Err(("Unexpected end of input in string escape", current.pos))
+            }
+            let escaped: char = current_char(current)
+            match escaped {
+                'n' => { sb = std.builder.append_char(sb, '\n') }
+                't' => { sb = std.builder.append_char(sb, '\t') }
+                'r' => { sb = std.builder.append_char(sb, '\r') }
+                '\\' => { sb = std.builder.append_char(sb, '\\') }
+                '"' => { sb = std.builder.append_char(sb, '"') }
+                _ => { sb = std.builder.append_char(sb, escaped) }
+            }
+            current = advance(current)
+        } else {
+            sb = std.builder.append_char(sb, c)
+            current = advance(current)
+        }
+    }
+
+    return Err(("Unterminated string literal", lex.pos))
+}
+
+// Read a symbol
+fn read_symbol(lex: Lexer) -> (Lexer, Token) {
+    var current: Lexer = lex
+    let start: i32 = current.pos
+
+    while not is_at_end(current) and is_symbol_char(current_char(current)) {
+        current = advance(current)
+    }
+
+    let symbol: string = std.string.substring(lex.input, start, current.pos)
+    return (current, TokSymbol(symbol))
+}
+
+// Check if looking at a number (optionally signed)
+fn looking_at_number(lex: Lexer) -> bool {
+    let c: char = current_char(lex)
+    if is_digit(c) {
+        return true
+    }
+    if (c == '+' or c == '-') {
+        let next: char = peek_char(lex, 1)
+        return is_digit(next)
+    }
+    return false
+}
+
+// Read next token
+fn next_token(lex: Lexer) -> Result[(Lexer, Token), (string, i32)] {
+    var current: Lexer = skip_whitespace_and_comments(lex)
+
+    if is_at_end(current) {
+        return Ok((current, TokEOF))
+    }
+
+    let c: char = current_char(current)
+
+    // Single character tokens
+    if c == '(' {
+        return Ok((advance(current), TokLParen))
+    }
+    if c == ')' {
+        return Ok((advance(current), TokRParen))
+    }
+    if c == '\'' {
+        return Ok((advance(current), TokQuote))
+    }
+
+    // String literal
+    if c == '"' {
+        return read_string(current)
+    }
+
+    // Boolean literals (#t and #f)
+    if c == '#' {
+        let next: char = peek_char(current, 1)
+        if next == 't' {
+            return Ok((advance(advance(current)), TokBool(true)))
+        } else if next == 'f' {
+            return Ok((advance(advance(current)), TokBool(false)))
+        } else {
+            return Err(("Invalid # literal", current.pos))
+        }
+    }
+
+    // Number (check before symbol since +/- can start both)
+    if looking_at_number(current) {
+        let result: (Lexer, Token) = read_number(current)
+        return Ok(result)
+    }
+
+    // Symbol
+    if is_symbol_start(c) {
+        let result: (Lexer, Token) = read_symbol(current)
+        return Ok(result)
+    }
+
+    return Err(("Unexpected character: " + std.char.to_string(c), current.pos))
+}
+
+// Main tokenize function
+fn tokenize(input: string) -> LexResult {
+    var lex: Lexer = lexer_new(input)
+    var tokens: List[Token] = Nil
+
+    loop {
+        match next_token(lex) {
+            Ok((new_lex, token)) => {
+                tokens = std.list.append(tokens, token)
+                lex = new_lex
+                match token {
+                    TokEOF => { break }
+                    _ => { }
+                }
+            }
+            Err((msg, pos)) => {
+                return LexErr(msg, pos)
+            }
+        }
+    }
+
+    return LexOk(tokens)
+}
+
+// Convert a token to string for debugging
+fn token_to_string(tok: Token) -> string {
+    match tok {
+        TokLParen => { return "LParen" }
+        TokRParen => { return "RParen" }
+        TokQuote => { return "Quote" }
+        TokInt(n) => { return "Int(" + to_string(n) + ")" }
+        TokFloat(n) => { return "Float(" + to_string(n) + ")" }
+        TokString(s) => { return "String(\"" + s + "\")" }
+        TokSymbol(s) => { return "Symbol(" + s + ")" }
+        TokBool(b) => {
+            if b {
+                return "Bool(true)"
+            } else {
+                return "Bool(false)"
+            }
+        }
+        TokEOF => { return "EOF" }
+    }
+}
+
+// Convert list of tokens to string for debugging
+fn tokens_to_string(tokens: List[Token]) -> string {
+    var sb: StringBuilder = std.builder.new()
+    sb = std.builder.append(sb, "[")
+    var first: bool = true
+    for tok in tokens {
+        if not first {
+            sb = std.builder.append(sb, ", ")
+        }
+        sb = std.builder.append(sb, token_to_string(tok))
+        first = false
+    }
+    sb = std.builder.append(sb, "]")
+    return std.builder.build(sb)
+}

@@ -1,0 +1,1344 @@
+// Lisp Interpreter - Main Entry Point
+// Combines lexer, parser, and evaluator into a working interpreter
+
+// ============================================================================
+// Token Types
+// ============================================================================
+
+type Token =
+    | TokLParen
+    | TokRParen
+    | TokQuote
+    | TokInt(i64)
+    | TokFloat(f64)
+    | TokString(string)
+    | TokSymbol(string)
+    | TokBool(bool)
+    | TokEOF
+
+type LexResult =
+    | LexOk(List[Token])
+    | LexErr(string, i32)
+
+// ============================================================================
+// Lisp Value Types
+// ============================================================================
+
+type LispValue =
+    | LispNil
+    | LispBool(bool)
+    | LispInt(i64)
+    | LispFloat(f64)
+    | LispString(string)
+    | LispSymbol(string)
+    | LispList(List[LispValue])
+    | LispLambda(List[string], LispValue, Env)
+    | LispBuiltin(string)
+
+type Env = {
+    bindings: HashMap,
+    parent: Option[Env]
+}
+
+type ParseResult =
+    | ParseOk(LispValue, List[Token])
+    | ParseErr(string)
+
+type ParseAllResult =
+    | ParseAllOk(List[LispValue])
+    | ParseAllErr(string)
+
+type EvalResult =
+    | EvalOk(LispValue, Env)
+    | EvalErr(string)
+
+// ============================================================================
+// Lexer
+// ============================================================================
+
+type Lexer = {
+    input: string,
+    pos: i32,
+    length: i32
+}
+
+// Helper to get string length (unwrap Result)
+fn str_len(s: string) -> i32 {
+    match std.string.length(s) {
+        Ok(n) => { return n }
+        Err(_) => { return 0 }
+    }
+}
+
+// Helper to get substring (unwrap Result)
+fn substr(s: string, start: i32, end: i32) -> string {
+    match std.string.substring(s, start, end) {
+        Ok(result) => { return result }
+        Err(_) => { return "" }
+    }
+}
+
+// Helper to get char at index (unwrap Result and Option)
+fn char_at(s: string, idx: i32) -> char {
+    match std.string.char_at(s, idx) {
+        Ok(opt) => {
+            match opt {
+                Some(c) => { return c }
+                None => { return '\0' }
+            }
+        }
+        Err(_) => { return '\0' }
+    }
+}
+
+fn lexer_new(input: string) -> Lexer {
+    return Lexer {
+        input: input,
+        pos: 0,
+        length: str_len(input)
+    }
+}
+
+fn is_at_end(lex: Lexer) -> bool {
+    return lex.pos >= lex.length
+}
+
+fn current_char(lex: Lexer) -> char {
+    if is_at_end(lex) { return '\0' }
+    return char_at(lex.input, lex.pos)
+}
+
+fn peek_char(lex: Lexer, offset: i32) -> char {
+    let idx: i32 = lex.pos + offset
+    if idx >= lex.length { return '\0' }
+    return char_at(lex.input, idx)
+}
+
+fn advance(lex: Lexer) -> Lexer {
+    return Lexer { input: lex.input, pos: lex.pos + 1, length: lex.length }
+}
+
+fn skip_whitespace_and_comments(lex: Lexer) -> Lexer {
+    var current: Lexer = lex
+    loop {
+        if is_at_end(current) { break }
+        let c: char = current_char(current)
+        if c == ' ' or c == '\t' or c == '\n' or c == '\r' {
+            current = advance(current)
+        } else if c == ';' {
+            while not is_at_end(current) and current_char(current) != '\n' {
+                current = advance(current)
+            }
+        } else {
+            break
+        }
+    }
+    return current
+}
+
+fn is_digit(c: char) -> bool {
+    return c >= '0' and c <= '9'
+}
+
+fn is_symbol_start(c: char) -> bool {
+    return (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or
+           c == '+' or c == '-' or c == '*' or c == '/' or
+           c == '<' or c == '>' or c == '=' or c == '!' or
+           c == '?' or c == '_' or c == '&' or c == '%' or
+           c == '^' or c == '~' or c == '@' or c == '$'
+}
+
+fn is_symbol_char(c: char) -> bool {
+    return is_symbol_start(c) or is_digit(c) or c == '.' or c == ':'
+}
+
+fn read_number(lex: Lexer) -> (Lexer, Token) {
+    var current: Lexer = lex
+    let start: i32 = current.pos
+    var has_dot: bool = false
+    var has_exp: bool = false
+
+    let first: char = current_char(current)
+    if first == '+' or first == '-' { current = advance(current) }
+
+    while not is_at_end(current) and is_digit(current_char(current)) {
+        current = advance(current)
+    }
+
+    if not is_at_end(current) and current_char(current) == '.' {
+        let next: char = peek_char(current, 1)
+        if is_digit(next) {
+            has_dot = true
+            current = advance(current)
+            while not is_at_end(current) and is_digit(current_char(current)) {
+                current = advance(current)
+            }
+        }
+    }
+
+    if not is_at_end(current) {
+        let exp_char: char = current_char(current)
+        if exp_char == 'e' or exp_char == 'E' {
+            has_exp = true
+            current = advance(current)
+            let sign: char = current_char(current)
+            if sign == '+' or sign == '-' { current = advance(current) }
+            while not is_at_end(current) and is_digit(current_char(current)) {
+                current = advance(current)
+            }
+        }
+    }
+
+    let num_str: string = substr(lex.input, start, current.pos)
+
+    // TODO: Add float parsing when Kira supports it
+    // For now, treat all numbers as integers
+    match std.string.parse_int(num_str) {
+        Some(n) => { return (current, TokInt(n)) }
+        None => { return (current, TokInt(0i64)) }
+    }
+}
+
+fn read_string(lex: Lexer) -> Result[(Lexer, Token), (string, i32)] {
+    var current: Lexer = advance(lex)
+    var sb: StringBuilder = std.builder.new()
+
+    while not is_at_end(current) {
+        let c: char = current_char(current)
+        if c == '"' {
+            current = advance(current)
+            return Ok((current, TokString(std.builder.build(sb))))
+        } else if c == '\\' {
+            current = advance(current)
+            if is_at_end(current) {
+                return Err(("Unexpected end in string escape", current.pos))
+            }
+            let escaped: char = current_char(current)
+            match escaped {
+                'n' => { sb = std.builder.append_char(sb, '\n') }
+                't' => { sb = std.builder.append_char(sb, '\t') }
+                'r' => { sb = std.builder.append_char(sb, '\r') }
+                '\\' => { sb = std.builder.append_char(sb, '\\') }
+                '"' => { sb = std.builder.append_char(sb, '"') }
+                _ => { sb = std.builder.append_char(sb, escaped) }
+            }
+            current = advance(current)
+        } else {
+            sb = std.builder.append_char(sb, c)
+            current = advance(current)
+        }
+    }
+    return Err(("Unterminated string", lex.pos))
+}
+
+fn read_symbol(lex: Lexer) -> (Lexer, Token) {
+    var current: Lexer = lex
+    let start: i32 = current.pos
+    while not is_at_end(current) and is_symbol_char(current_char(current)) {
+        current = advance(current)
+    }
+    let symbol: string = substr(lex.input, start, current.pos)
+    return (current, TokSymbol(symbol))
+}
+
+fn looking_at_number(lex: Lexer) -> bool {
+    let c: char = current_char(lex)
+    if is_digit(c) { return true }
+    if (c == '+' or c == '-') {
+        let next: char = peek_char(lex, 1)
+        return is_digit(next)
+    }
+    return false
+}
+
+fn next_token(lex: Lexer) -> Result[(Lexer, Token), (string, i32)] {
+    var current: Lexer = skip_whitespace_and_comments(lex)
+    if is_at_end(current) {
+        return Ok((current, TokEOF))
+    }
+    let c: char = current_char(current)
+
+    if c == '(' { return Ok((advance(current), TokLParen)) }
+    if c == ')' { return Ok((advance(current), TokRParen)) }
+    if c == '\'' { return Ok((advance(current), TokQuote)) }
+    if c == '"' { return read_string(current) }
+
+    if c == '#' {
+        let next: char = peek_char(current, 1)
+        if next == 't' { return Ok((advance(advance(current)), TokBool(true))) }
+        if next == 'f' { return Ok((advance(advance(current)), TokBool(false))) }
+        return Err(("Invalid # literal", current.pos))
+    }
+
+    if looking_at_number(current) {
+        let result: (Lexer, Token) = read_number(current)
+        return Ok(result)
+    }
+
+    if is_symbol_start(c) {
+        let result: (Lexer, Token) = read_symbol(current)
+        return Ok(result)
+    }
+
+    return Err(("Unexpected character", current.pos))
+}
+
+effect fn tokenize(input: string) -> LexResult {
+    var lex: Lexer = lexer_new(input)
+    var tokens: List[Token] = Nil
+
+    loop {
+        match next_token(lex) {
+            Ok((new_lex, token)) => {
+                tokens = Cons(token, tokens)
+                lex = new_lex
+                match token {
+                    TokEOF => { break }
+                    _ => { }
+                }
+            }
+            Err((msg, pos)) => { return LexErr(msg, pos) }
+        }
+    }
+    return LexOk(std.list.reverse(tokens))
+}
+
+// ============================================================================
+// Parser
+// ============================================================================
+
+fn parse_expr(tokens: List[Token]) -> ParseResult {
+    match tokens {
+        Nil => { return ParseErr("Unexpected end of input") }
+        Cons(token, rest) => {
+            match token {
+                TokInt(n) => { return ParseOk(LispInt(n), rest) }
+                TokFloat(n) => { return ParseOk(LispFloat(n), rest) }
+                TokString(s) => { return ParseOk(LispString(s), rest) }
+                TokSymbol(s) => { return ParseOk(LispSymbol(s), rest) }
+                TokBool(b) => { return ParseOk(LispBool(b), rest) }
+                TokLParen => { return parse_list(rest) }
+                TokRParen => { return ParseErr("Unexpected )") }
+                TokQuote => { return parse_quoted(rest) }
+                TokEOF => { return ParseErr("Unexpected EOF") }
+            }
+        }
+    }
+}
+
+fn parse_list(tokens: List[Token]) -> ParseResult {
+    var current: List[Token] = tokens
+    var elements: List[LispValue] = Nil
+
+    loop {
+        match current {
+            Nil => { return ParseErr("Unclosed list") }
+            Cons(token, rest) => {
+                match token {
+                    TokRParen => {
+                        return ParseOk(LispList(std.list.reverse(elements)), rest)
+                    }
+                    TokEOF => { return ParseErr("Unclosed list at EOF") }
+                    _ => {
+                        match parse_expr(current) {
+                            ParseOk(value, remaining) => {
+                                elements = Cons(value, elements)
+                                current = remaining
+                            }
+                            ParseErr(msg) => { return ParseErr(msg) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn parse_quoted(tokens: List[Token]) -> ParseResult {
+    match parse_expr(tokens) {
+        ParseOk(value, rest) => {
+            let quote_sym: LispValue = LispSymbol("quote")
+            let quoted: LispValue = LispList(Cons(quote_sym, Cons(value, Nil)))
+            return ParseOk(quoted, rest)
+        }
+        ParseErr(msg) => { return ParseErr(msg) }
+    }
+}
+
+fn parse_all(tokens: List[Token]) -> ParseAllResult {
+    var current: List[Token] = tokens
+    var exprs: List[LispValue] = Nil
+
+    loop {
+        match current {
+            Nil => { return ParseAllOk(std.list.reverse(exprs)) }
+            Cons(token, _) => {
+                match token {
+                    TokEOF => { return ParseAllOk(std.list.reverse(exprs)) }
+                    _ => {
+                        match parse_expr(current) {
+                            ParseOk(value, remaining) => {
+                                exprs = Cons(value, exprs)
+                                current = remaining
+                            }
+                            ParseErr(msg) => { return ParseAllErr(msg) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Environment (using association list instead of HashMap for simplicity)
+// ============================================================================
+
+// Binding is a name-value pair
+type Binding = (string, LispValue)
+
+// Environment is a list of bindings plus optional parent
+type EnvData = {
+    bindings: List[Binding],
+    parent: Option[Env]
+}
+
+fn env_new() -> Env {
+    return Env { bindings: std.map.new(), parent: None }
+}
+
+fn env_extend(parent: Env) -> Env {
+    return Env { bindings: std.map.new(), parent: Some(parent) }
+}
+
+// Helper to lookup in a binding list
+fn lookup_in_bindings(bindings: List[Binding], name: string) -> Option[LispValue] {
+    match bindings {
+        Nil => { return None }
+        Cons(binding, rest) => {
+            let (bname, bvalue): (string, LispValue) = binding
+            if bname == name {
+                return Some(bvalue)
+            }
+            return lookup_in_bindings(rest, name)
+        }
+    }
+}
+
+fn env_define(env: Env, name: string, value: LispValue) -> Env {
+    let new_bindings: HashMap = std.map.put(env.bindings, name, value)
+    return Env { bindings: new_bindings, parent: env.parent }
+}
+
+fn env_lookup(env: Env, name: string) -> Option[LispValue] {
+    match std.map.get(env.bindings, name) {
+        Some(value) => {
+            // Cast from any to LispValue
+            return Some(value)
+        }
+        None => {
+            match env.parent {
+                Some(parent) => { return env_lookup(parent, name) }
+                None => { return None }
+            }
+        }
+    }
+}
+
+fn env_set(env: Env, name: string, value: LispValue) -> Result[Env, string] {
+    if std.map.contains(env.bindings, name) {
+        let new_bindings: HashMap = std.map.put(env.bindings, name, value)
+        return Ok(Env { bindings: new_bindings, parent: env.parent })
+    } else {
+        match env.parent {
+            Some(parent) => {
+                match env_set(parent, name, value) {
+                    Ok(new_parent) => {
+                        return Ok(Env { bindings: env.bindings, parent: Some(new_parent) })
+                    }
+                    Err(msg) => { return Err(msg) }
+                }
+            }
+            None => { return Err("Undefined variable: " + name) }
+        }
+    }
+}
+
+fn env_define_all(env: Env, names: List[string], values: List[LispValue]) -> Result[Env, string] {
+    var current_env: Env = env
+    var name_list: List[string] = names
+    var value_list: List[LispValue] = values
+
+    loop {
+        match (name_list, value_list) {
+            (Nil, Nil) => { return Ok(current_env) }
+            (Cons(name, rest_names), Cons(value, rest_values)) => {
+                current_env = env_define(current_env, name, value)
+                name_list = rest_names
+                value_list = rest_values
+            }
+            (Nil, Cons(_, _)) => { return Err("Too many arguments") }
+            (Cons(_, _), Nil) => { return Err("Not enough arguments") }
+        }
+    }
+}
+
+// ============================================================================
+// Evaluator
+// ============================================================================
+
+// Helper to convert i64 to string using StringBuilder
+fn i64_to_str(n: i64) -> string {
+    var sb: StringBuilder = std.builder.new()
+    sb = std.builder.append_int(sb, n)
+    return std.builder.build(sb)
+}
+
+// Helper to convert f64 to string using StringBuilder
+fn f64_to_str(n: f64) -> string {
+    var sb: StringBuilder = std.builder.new()
+    sb = std.builder.append_float(sb, n)
+    return std.builder.build(sb)
+}
+
+fn lisp_to_string(v: LispValue) -> string {
+    match v {
+        LispNil => { return "()" }
+        LispBool(b) => { if b { return "#t" } else { return "#f" } }
+        LispInt(n) => { return i64_to_str(n) }
+        LispFloat(n) => { return f64_to_str(n) }
+        LispString(s) => { return "\"" + s + "\"" }
+        LispSymbol(s) => { return s }
+        LispList(items) => {
+            var sb: StringBuilder = std.builder.new()
+            sb = std.builder.append(sb, "(")
+            var first: bool = true
+            for item in items {
+                if not first { sb = std.builder.append(sb, " ") }
+                sb = std.builder.append(sb, lisp_to_string(item))
+                first = false
+            }
+            sb = std.builder.append(sb, ")")
+            return std.builder.build(sb)
+        }
+        LispLambda(params, _, _) => {
+            var sb: StringBuilder = std.builder.new()
+            sb = std.builder.append(sb, "#<lambda (")
+            var first: bool = true
+            for p in params {
+                if not first { sb = std.builder.append(sb, " ") }
+                sb = std.builder.append(sb, p)
+                first = false
+            }
+            sb = std.builder.append(sb, ")>")
+            return std.builder.build(sb)
+        }
+        LispBuiltin(name) => { return "#<builtin:" + name + ">" }
+    }
+}
+
+fn is_truthy(v: LispValue) -> bool {
+    match v { LispBool(b) => { return b } _ => { return true } }
+}
+
+fn eval(expr: LispValue, env: Env) -> EvalResult {
+    match expr {
+        LispNil => { return EvalOk(LispNil, env) }
+        LispBool(b) => { return EvalOk(LispBool(b), env) }
+        LispInt(n) => { return EvalOk(LispInt(n), env) }
+        LispFloat(n) => { return EvalOk(LispFloat(n), env) }
+        LispString(s) => { return EvalOk(LispString(s), env) }
+        LispSymbol(name) => {
+            match env_lookup(env, name) {
+                Some(value) => { return EvalOk(value, env) }
+                None => { return EvalErr("Undefined variable: " + name) }
+            }
+        }
+        LispList(items) => {
+            match items {
+                Nil => { return EvalOk(LispNil, env) }
+                Cons(first, rest) => { return eval_list(first, rest, env) }
+            }
+        }
+        LispLambda(p, b, e) => { return EvalOk(LispLambda(p, b, e), env) }
+        LispBuiltin(n) => { return EvalOk(LispBuiltin(n), env) }
+    }
+}
+
+fn eval_list(first: LispValue, rest: List[LispValue], env: Env) -> EvalResult {
+    match first {
+        LispSymbol(name) => {
+            if name == "quote" { return eval_quote(rest, env) }
+            if name == "if" { return eval_if(rest, env) }
+            if name == "define" { return eval_define(rest, env) }
+            if name == "lambda" { return eval_lambda(rest, env) }
+            if name == "let" { return eval_let(rest, env) }
+            if name == "begin" { return eval_begin(rest, env) }
+            if name == "set!" { return eval_set(rest, env) }
+            if name == "and" { return eval_and(rest, env) }
+            if name == "or" { return eval_or(rest, env) }
+            return eval_application(first, rest, env)
+        }
+        _ => { return eval_application(first, rest, env) }
+    }
+}
+
+fn eval_quote(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(value, Nil) => { return EvalOk(value, env) }
+        _ => { return EvalErr("quote requires one argument") }
+    }
+}
+
+fn eval_if(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(cond, Cons(then_expr, else_part)) => {
+            match eval(cond, env) {
+                EvalOk(cond_val, env2) => {
+                    if is_truthy(cond_val) {
+                        return eval(then_expr, env2)
+                    } else {
+                        match else_part {
+                            Cons(else_expr, Nil) => { return eval(else_expr, env2) }
+                            Nil => { return EvalOk(LispNil, env2) }
+                            _ => { return EvalErr("if: too many arguments") }
+                        }
+                    }
+                }
+                EvalErr(msg) => { return EvalErr(msg) }
+            }
+        }
+        _ => { return EvalErr("if requires 2-3 arguments") }
+    }
+}
+
+fn eval_define(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(LispSymbol(name), Cons(value_expr, Nil)) => {
+            match eval(value_expr, env) {
+                EvalOk(value, env2) => {
+                    let new_env: Env = env_define(env2, name, value)
+                    return EvalOk(LispNil, new_env)
+                }
+                EvalErr(msg) => { return EvalErr(msg) }
+            }
+        }
+        Cons(LispList(name_and_params), body) => {
+            match name_and_params {
+                Cons(LispSymbol(name), params) => {
+                    match extract_param_names(params) {
+                        Ok(param_names) => {
+                            let lambda_body: LispValue = make_begin(body)
+                            let lambda: LispValue = LispLambda(param_names, lambda_body, env)
+                            let new_env: Env = env_define(env, name, lambda)
+                            return EvalOk(LispNil, new_env)
+                        }
+                        Err(msg) => { return EvalErr(msg) }
+                    }
+                }
+                _ => { return EvalErr("define: invalid function definition") }
+            }
+        }
+        _ => { return EvalErr("define: invalid syntax") }
+    }
+}
+
+fn extract_param_names(params: List[LispValue]) -> Result[List[string], string] {
+    var names: List[string] = Nil
+    for p in params {
+        match p {
+            LispSymbol(name) => { names = Cons(name, names) }
+            _ => { return Err("Parameter must be a symbol") }
+        }
+    }
+    return Ok(std.list.reverse(names))
+}
+
+fn make_begin(body: List[LispValue]) -> LispValue {
+    match body {
+        Cons(single, Nil) => { return single }
+        _ => { return LispList(Cons(LispSymbol("begin"), body)) }
+    }
+}
+
+fn eval_lambda(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(LispList(params), body) => {
+            match extract_param_names(params) {
+                Ok(param_names) => {
+                    let lambda_body: LispValue = make_begin(body)
+                    return EvalOk(LispLambda(param_names, lambda_body, env), env)
+                }
+                Err(msg) => { return EvalErr(msg) }
+            }
+        }
+        _ => { return EvalErr("lambda: invalid syntax") }
+    }
+}
+
+fn eval_let(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(LispList(bindings), body) => {
+            var let_env: Env = env_extend(env)
+            for binding in bindings {
+                match binding {
+                    LispList(Cons(LispSymbol(name), Cons(value_expr, Nil))) => {
+                        match eval(value_expr, env) {
+                            EvalOk(value, _) => { let_env = env_define(let_env, name, value) }
+                            EvalErr(msg) => { return EvalErr(msg) }
+                        }
+                    }
+                    _ => { return EvalErr("let: invalid binding") }
+                }
+            }
+            return eval_begin_list(body, let_env)
+        }
+        _ => { return EvalErr("let: invalid syntax") }
+    }
+}
+
+fn eval_begin(args: List[LispValue], env: Env) -> EvalResult {
+    return eval_begin_list(args, env)
+}
+
+fn eval_begin_list(exprs: List[LispValue], env: Env) -> EvalResult {
+    var current_env: Env = env
+    var result: LispValue = LispNil
+    for expr in exprs {
+        match eval(expr, current_env) {
+            EvalOk(value, new_env) => {
+                result = value
+                current_env = new_env
+            }
+            EvalErr(msg) => { return EvalErr(msg) }
+        }
+    }
+    return EvalOk(result, current_env)
+}
+
+fn eval_set(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(LispSymbol(name), Cons(value_expr, Nil)) => {
+            match eval(value_expr, env) {
+                EvalOk(value, env2) => {
+                    match env_set(env2, name, value) {
+                        Ok(new_env) => { return EvalOk(LispNil, new_env) }
+                        Err(msg) => { return EvalErr(msg) }
+                    }
+                }
+                EvalErr(msg) => { return EvalErr(msg) }
+            }
+        }
+        _ => { return EvalErr("set! requires variable and value") }
+    }
+}
+
+fn eval_and(args: List[LispValue], env: Env) -> EvalResult {
+    var current_env: Env = env
+    var result: LispValue = LispBool(true)
+    for arg in args {
+        match eval(arg, current_env) {
+            EvalOk(value, new_env) => {
+                current_env = new_env
+                if not is_truthy(value) { return EvalOk(LispBool(false), current_env) }
+                result = value
+            }
+            EvalErr(msg) => { return EvalErr(msg) }
+        }
+    }
+    return EvalOk(result, current_env)
+}
+
+fn eval_or(args: List[LispValue], env: Env) -> EvalResult {
+    var current_env: Env = env
+    for arg in args {
+        match eval(arg, current_env) {
+            EvalOk(value, new_env) => {
+                current_env = new_env
+                if is_truthy(value) { return EvalOk(value, current_env) }
+            }
+            EvalErr(msg) => { return EvalErr(msg) }
+        }
+    }
+    return EvalOk(LispBool(false), current_env)
+}
+
+fn eval_application(op_expr: LispValue, args: List[LispValue], env: Env) -> EvalResult {
+    match eval(op_expr, env) {
+        EvalOk(op, env2) => {
+            match eval_list_values(args, env2) {
+                Ok((arg_values, env3)) => { return apply(op, arg_values, env3) }
+                Err(msg) => { return EvalErr(msg) }
+            }
+        }
+        EvalErr(msg) => { return EvalErr(msg) }
+    }
+}
+
+fn eval_list_values(exprs: List[LispValue], env: Env) -> Result[(List[LispValue], Env), string] {
+    var current_env: Env = env
+    var values: List[LispValue] = Nil
+    for expr in exprs {
+        match eval(expr, current_env) {
+            EvalOk(value, new_env) => {
+                values = Cons(value, values)
+                current_env = new_env
+            }
+            EvalErr(msg) => { return Err(msg) }
+        }
+    }
+    return Ok((std.list.reverse(values), current_env))
+}
+
+fn apply(func: LispValue, args: List[LispValue], env: Env) -> EvalResult {
+    match func {
+        LispLambda(params, body, closure_env) => {
+            // Create call environment by extending closure_env with the caller's env as fallback
+            // This allows recursive functions to find themselves in the caller's environment
+            // First merge: closure_env for lexical scope, env for dynamic lookups (like self-reference)
+            let base_env: Env = Env {
+                bindings: closure_env.bindings,
+                parent: Some(env)
+            }
+            let call_env: Env = env_extend(base_env)
+            match env_define_all(call_env, params, args) {
+                Ok(bound_env) => {
+                    match eval(body, bound_env) {
+                        EvalOk(result, _) => { return EvalOk(result, env) }
+                        EvalErr(msg) => { return EvalErr(msg) }
+                    }
+                }
+                Err(msg) => { return EvalErr(msg) }
+            }
+        }
+        LispBuiltin(name) => { return apply_builtin(name, args, env) }
+        _ => { return EvalErr("Cannot apply: " + lisp_to_string(func)) }
+    }
+}
+
+// ============================================================================
+// Built-in Functions
+// ============================================================================
+
+fn apply_builtin(name: string, args: List[LispValue], env: Env) -> EvalResult {
+    if name == "+" { return builtin_add(args, env) }
+    if name == "-" { return builtin_sub(args, env) }
+    if name == "*" { return builtin_mul(args, env) }
+    if name == "/" { return builtin_div(args, env) }
+    if name == "mod" { return builtin_mod(args, env) }
+    if name == "=" { return builtin_num_eq(args, env) }
+    if name == "<" { return builtin_lt(args, env) }
+    if name == ">" { return builtin_gt(args, env) }
+    if name == "<=" { return builtin_le(args, env) }
+    if name == ">=" { return builtin_ge(args, env) }
+    if name == "cons" { return builtin_cons(args, env) }
+    if name == "car" { return builtin_car(args, env) }
+    if name == "cdr" { return builtin_cdr(args, env) }
+    if name == "list" { return EvalOk(LispList(args), env) }
+    if name == "null?" { return builtin_null(args, env) }
+    if name == "pair?" { return builtin_pair(args, env) }
+    if name == "length" { return builtin_length(args, env) }
+    if name == "number?" { return builtin_numberp(args, env) }
+    if name == "string?" { return builtin_stringp(args, env) }
+    if name == "symbol?" { return builtin_symbolp(args, env) }
+    if name == "procedure?" { return builtin_procedurep(args, env) }
+    if name == "boolean?" { return builtin_booleanp(args, env) }
+    if name == "eq?" { return builtin_eqp(args, env) }
+    if name == "equal?" { return builtin_equalp(args, env) }
+    if name == "not" { return builtin_not(args, env) }
+    if name == "string-append" { return builtin_string_append(args, env) }
+    if name == "string-length" { return builtin_string_length(args, env) }
+    if name == "number->string" { return builtin_num_to_str(args, env) }
+    if name == "string->number" { return builtin_str_to_num(args, env) }
+    if name == "abs" { return builtin_abs(args, env) }
+    if name == "min" { return builtin_min(args, env) }
+    if name == "max" { return builtin_max(args, env) }
+    return EvalErr("Unknown builtin: " + name)
+}
+
+fn builtin_add(args: List[LispValue], env: Env) -> EvalResult {
+    var sum_int: i64 = 0i64
+    var sum_float: f64 = 0.0
+    var is_float: bool = false
+    for arg in args {
+        match arg {
+            LispInt(n) => { if is_float { sum_float = sum_float + to_float(n) } else { sum_int = sum_int + n } }
+            LispFloat(n) => {
+                if not is_float {
+                    is_float = true
+                    sum_float = to_float(sum_int)
+                }
+                sum_float = sum_float + n
+            }
+            _ => { return EvalErr("+: expected number") }
+        }
+    }
+    if is_float { return EvalOk(LispFloat(sum_float), env) } else { return EvalOk(LispInt(sum_int), env) }
+}
+
+fn builtin_sub(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Nil => { return EvalErr("-: requires arguments") }
+        Cons(first, rest) => {
+            match first {
+                LispInt(n) => {
+                    match rest {
+                        Nil => { return EvalOk(LispInt(0i64 - n), env) }
+                        _ => {
+                            var result: i64 = n
+                            for arg in rest {
+                                match arg {
+                                    LispInt(m) => { result = result - m }
+                                    _ => { return EvalErr("-: expected number") }
+                                }
+                            }
+                            return EvalOk(LispInt(result), env)
+                        }
+                    }
+                }
+                LispFloat(n) => {
+                    match rest {
+                        Nil => { return EvalOk(LispFloat(0.0 - n), env) }
+                        _ => {
+                            var result: f64 = n
+                            for arg in rest {
+                                match arg {
+                                    LispFloat(m) => { result = result - m }
+                                    LispInt(m) => { result = result - to_float(m) }
+                                    _ => { return EvalErr("-: expected number") }
+                                }
+                            }
+                            return EvalOk(LispFloat(result), env)
+                        }
+                    }
+                }
+                _ => { return EvalErr("-: expected number") }
+            }
+        }
+    }
+}
+
+fn builtin_mul(args: List[LispValue], env: Env) -> EvalResult {
+    var prod_int: i64 = 1i64
+    var prod_float: f64 = 1.0
+    var is_float: bool = false
+    for arg in args {
+        match arg {
+            LispInt(n) => { if is_float { prod_float = prod_float * to_float(n) } else { prod_int = prod_int * n } }
+            LispFloat(n) => {
+                if not is_float {
+                    is_float = true
+                    prod_float = to_float(prod_int)
+                }
+                prod_float = prod_float * n
+            }
+            _ => { return EvalErr("*: expected number") }
+        }
+    }
+    if is_float { return EvalOk(LispFloat(prod_float), env) } else { return EvalOk(LispInt(prod_int), env) }
+}
+
+fn builtin_div(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(LispInt(a), Cons(LispInt(b), Nil)) => {
+            if b == 0i64 { return EvalErr("/: division by zero") }
+            return EvalOk(LispInt(a / b), env)
+        }
+        _ => { return EvalErr("/: requires two integer arguments") }
+    }
+}
+
+fn builtin_mod(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(LispInt(a), Cons(LispInt(b), Nil)) => {
+            if b == 0i64 { return EvalErr("mod: division by zero") }
+            return EvalOk(LispInt(a % b), env)
+        }
+        _ => { return EvalErr("mod: requires two integers") }
+    }
+}
+
+fn builtin_num_eq(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { return EvalOk(LispBool(a == b), env) }
+        Cons(LispFloat(a), Cons(LispFloat(b), Nil)) => { return EvalOk(LispBool(a == b), env) }
+        _ => { return EvalErr("=: requires two numbers") }
+    }
+}
+
+fn builtin_lt(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { return EvalOk(LispBool(a < b), env) }
+        _ => { return EvalErr("<: requires two numbers") }
+    }
+}
+
+fn builtin_gt(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { return EvalOk(LispBool(a > b), env) }
+        _ => { return EvalErr(">: requires two numbers") }
+    }
+}
+
+fn builtin_le(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { return EvalOk(LispBool(a <= b), env) }
+        _ => { return EvalErr("<=: requires two numbers") }
+    }
+}
+
+fn builtin_ge(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { return EvalOk(LispBool(a >= b), env) }
+        _ => { return EvalErr(">=: requires two numbers") }
+    }
+}
+
+fn builtin_cons(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(head, Cons(LispList(tail), Nil)) => { return EvalOk(LispList(Cons(head, tail)), env) }
+        Cons(head, Cons(LispNil, Nil)) => { return EvalOk(LispList(Cons(head, Nil)), env) }
+        _ => { return EvalErr("cons: requires element and list") }
+    }
+}
+
+fn builtin_car(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(LispList(Cons(head, _)), Nil) => { return EvalOk(head, env) }
+        _ => { return EvalErr("car: requires non-empty list") }
+    }
+}
+
+fn builtin_cdr(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(LispList(Cons(_, tail)), Nil) => { return EvalOk(LispList(tail), env) }
+        _ => { return EvalErr("cdr: requires non-empty list") }
+    }
+}
+
+fn builtin_null(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(LispList(Nil), Nil) => { return EvalOk(LispBool(true), env) }
+        Cons(LispNil, Nil) => { return EvalOk(LispBool(true), env) }
+        Cons(_, Nil) => { return EvalOk(LispBool(false), env) }
+        _ => { return EvalErr("null?: requires one argument") }
+    }
+}
+
+fn builtin_pair(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(LispList(Cons(_, _)), Nil) => { return EvalOk(LispBool(true), env) }
+        Cons(_, Nil) => { return EvalOk(LispBool(false), env) }
+        _ => { return EvalErr("pair?: requires one argument") }
+    }
+}
+
+fn builtin_length(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(LispList(items), Nil) => { return EvalOk(LispInt(std.list.length(items)), env) }
+        Cons(LispNil, Nil) => { return EvalOk(LispInt(0i64), env) }
+        _ => { return EvalErr("length: requires a list") }
+    }
+}
+
+fn builtin_numberp(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(LispInt(_), Nil) => { return EvalOk(LispBool(true), env) }
+        Cons(LispFloat(_), Nil) => { return EvalOk(LispBool(true), env) }
+        Cons(_, Nil) => { return EvalOk(LispBool(false), env) }
+        _ => { return EvalErr("number?: requires one argument") }
+    }
+}
+
+fn builtin_stringp(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(LispString(_), Nil) => { return EvalOk(LispBool(true), env) }
+        Cons(_, Nil) => { return EvalOk(LispBool(false), env) }
+        _ => { return EvalErr("string?: requires one argument") }
+    }
+}
+
+fn builtin_symbolp(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(LispSymbol(_), Nil) => { return EvalOk(LispBool(true), env) }
+        Cons(_, Nil) => { return EvalOk(LispBool(false), env) }
+        _ => { return EvalErr("symbol?: requires one argument") }
+    }
+}
+
+fn builtin_procedurep(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(LispLambda(_, _, _), Nil) => { return EvalOk(LispBool(true), env) }
+        Cons(LispBuiltin(_), Nil) => { return EvalOk(LispBool(true), env) }
+        Cons(_, Nil) => { return EvalOk(LispBool(false), env) }
+        _ => { return EvalErr("procedure?: requires one argument") }
+    }
+}
+
+fn builtin_booleanp(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(LispBool(_), Nil) => { return EvalOk(LispBool(true), env) }
+        Cons(_, Nil) => { return EvalOk(LispBool(false), env) }
+        _ => { return EvalErr("boolean?: requires one argument") }
+    }
+}
+
+fn values_eq(a: LispValue, b: LispValue) -> bool {
+    match (a, b) {
+        (LispNil, LispNil) => { return true }
+        (LispBool(x), LispBool(y)) => { return x == y }
+        (LispInt(x), LispInt(y)) => { return x == y }
+        (LispSymbol(x), LispSymbol(y)) => { return x == y }
+        (LispString(x), LispString(y)) => { return x == y }
+        _ => { return false }
+    }
+}
+
+fn builtin_eqp(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(a, Cons(b, Nil)) => { return EvalOk(LispBool(values_eq(a, b)), env) }
+        _ => { return EvalErr("eq?: requires two arguments") }
+    }
+}
+
+fn values_equal(a: LispValue, b: LispValue) -> bool {
+    match (a, b) {
+        (LispNil, LispNil) => { return true }
+        (LispBool(x), LispBool(y)) => { return x == y }
+        (LispInt(x), LispInt(y)) => { return x == y }
+        (LispFloat(x), LispFloat(y)) => { return x == y }
+        (LispSymbol(x), LispSymbol(y)) => { return x == y }
+        (LispString(x), LispString(y)) => { return x == y }
+        (LispList(xs), LispList(ys)) => { return lists_equal(xs, ys) }
+        _ => { return false }
+    }
+}
+
+fn lists_equal(xs: List[LispValue], ys: List[LispValue]) -> bool {
+    match (xs, ys) {
+        (Nil, Nil) => { return true }
+        (Cons(x, xr), Cons(y, yr)) => {
+            if not values_equal(x, y) {
+                return false
+            }
+            return lists_equal(xr, yr)
+        }
+        _ => { return false }
+    }
+}
+
+fn builtin_equalp(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(a, Cons(b, Nil)) => { return EvalOk(LispBool(values_equal(a, b)), env) }
+        _ => { return EvalErr("equal?: requires two arguments") }
+    }
+}
+
+fn builtin_not(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(v, Nil) => { return EvalOk(LispBool(not is_truthy(v)), env) }
+        _ => { return EvalErr("not: requires one argument") }
+    }
+}
+
+fn builtin_string_append(args: List[LispValue], env: Env) -> EvalResult {
+    var sb: StringBuilder = std.builder.new()
+    for arg in args {
+        match arg {
+            LispString(s) => { sb = std.builder.append(sb, s) }
+            _ => { return EvalErr("string-append: requires strings") }
+        }
+    }
+    return EvalOk(LispString(std.builder.build(sb)), env)
+}
+
+fn builtin_string_length(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(LispString(s), Nil) => { return EvalOk(LispInt(str_len(s)), env) }
+        _ => { return EvalErr("string-length: requires one string") }
+    }
+}
+
+fn builtin_num_to_str(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(LispInt(n), Nil) => { return EvalOk(LispString(to_string(n)), env) }
+        Cons(LispFloat(n), Nil) => { return EvalOk(LispString(to_string(n)), env) }
+        _ => { return EvalErr("number->string: requires a number") }
+    }
+}
+
+fn builtin_str_to_num(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(LispString(s), Nil) => {
+            match std.string.parse_int(s) {
+                Some(n) => { return EvalOk(LispInt(n), env) }
+                None => {
+                    match std.string.parse_float(s) {
+                        Some(f) => { return EvalOk(LispFloat(f), env) }
+                        None => { return EvalOk(LispBool(false), env) }
+                    }
+                }
+            }
+        }
+        _ => { return EvalErr("string->number: requires a string") }
+    }
+}
+
+fn builtin_abs(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(LispInt(n), Nil) => { if n < 0i64 { return EvalOk(LispInt(0i64 - n), env) } else { return EvalOk(LispInt(n), env) } }
+        Cons(LispFloat(n), Nil) => { if n < 0.0 { return EvalOk(LispFloat(0.0 - n), env) } else { return EvalOk(LispFloat(n), env) } }
+        _ => { return EvalErr("abs: requires a number") }
+    }
+}
+
+fn builtin_min(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { if a < b { return EvalOk(LispInt(a), env) } else { return EvalOk(LispInt(b), env) } }
+        _ => { return EvalErr("min: requires two numbers") }
+    }
+}
+
+fn builtin_max(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Cons(LispInt(a), Cons(LispInt(b), Nil)) => { if a > b { return EvalOk(LispInt(a), env) } else { return EvalOk(LispInt(b), env) } }
+        _ => { return EvalErr("max: requires two numbers") }
+    }
+}
+
+// ============================================================================
+// Initial Environment
+// ============================================================================
+
+fn make_initial_env() -> Env {
+    var env: Env = env_new()
+    env = env_define(env, "+", LispBuiltin("+"))
+    env = env_define(env, "-", LispBuiltin("-"))
+    env = env_define(env, "*", LispBuiltin("*"))
+    env = env_define(env, "/", LispBuiltin("/"))
+    env = env_define(env, "mod", LispBuiltin("mod"))
+    env = env_define(env, "=", LispBuiltin("="))
+    env = env_define(env, "<", LispBuiltin("<"))
+    env = env_define(env, ">", LispBuiltin(">"))
+    env = env_define(env, "<=", LispBuiltin("<="))
+    env = env_define(env, ">=", LispBuiltin(">="))
+    env = env_define(env, "cons", LispBuiltin("cons"))
+    env = env_define(env, "car", LispBuiltin("car"))
+    env = env_define(env, "cdr", LispBuiltin("cdr"))
+    env = env_define(env, "list", LispBuiltin("list"))
+    env = env_define(env, "null?", LispBuiltin("null?"))
+    env = env_define(env, "pair?", LispBuiltin("pair?"))
+    env = env_define(env, "length", LispBuiltin("length"))
+    env = env_define(env, "number?", LispBuiltin("number?"))
+    env = env_define(env, "string?", LispBuiltin("string?"))
+    env = env_define(env, "symbol?", LispBuiltin("symbol?"))
+    env = env_define(env, "procedure?", LispBuiltin("procedure?"))
+    env = env_define(env, "boolean?", LispBuiltin("boolean?"))
+    env = env_define(env, "eq?", LispBuiltin("eq?"))
+    env = env_define(env, "equal?", LispBuiltin("equal?"))
+    env = env_define(env, "not", LispBuiltin("not"))
+    env = env_define(env, "string-append", LispBuiltin("string-append"))
+    env = env_define(env, "string-length", LispBuiltin("string-length"))
+    env = env_define(env, "number->string", LispBuiltin("number->string"))
+    env = env_define(env, "string->number", LispBuiltin("string->number"))
+    env = env_define(env, "abs", LispBuiltin("abs"))
+    env = env_define(env, "min", LispBuiltin("min"))
+    env = env_define(env, "max", LispBuiltin("max"))
+    return env
+}
+
+// ============================================================================
+// REPL and Main
+// ============================================================================
+
+fn run_program(source: string, env: Env) -> EvalResult {
+    match tokenize(source) {
+        LexOk(tokens) => {
+            match parse_all(tokens) {
+                ParseAllOk(exprs) => {
+                    return eval_begin_list(exprs, env)
+                }
+                ParseAllErr(msg) => { return EvalErr("Parse error: " + msg) }
+            }
+        }
+        LexErr(msg, pos) => { return EvalErr("Lex error at " + to_string(pos) + ": " + msg) }
+    }
+}
+
+effect fn print_result(v: LispValue) -> void {
+    let s: string = lisp_to_string(v)
+    std.io.println(s)
+}
+
+effect fn repl_loop(env: Env) -> void {
+    var current_env: Env = env
+    loop {
+        std.io.print("lisp> ")
+        match std.io.read_line() {
+            Ok(line) => {
+                let trimmed: string = std.string.trim(line)
+                if trimmed == "" {
+                    // Empty line, continue
+                } else if trimmed == "(exit)" or trimmed == "(quit)" {
+                    std.io.println("Goodbye!")
+                    break
+                } else {
+                    match tokenize(trimmed) {
+                        LexOk(tokens) => {
+                            match parse_all(tokens) {
+                                ParseAllOk(exprs) => {
+                                    match eval_begin_list(exprs, current_env) {
+                                        EvalOk(result, new_env) => {
+                                            print_result(result)
+                                            current_env = new_env
+                                        }
+                                        EvalErr(msg) => {
+                                            std.io.println("Error: " + msg)
+                                        }
+                                    }
+                                }
+                                ParseAllErr(msg) => {
+                                    std.io.println("Parse error: " + msg)
+                                }
+                            }
+                        }
+                        LexErr(msg, pos) => {
+                            std.io.println("Lex error at " + to_string(pos) + ": " + msg)
+                        }
+                    }
+                }
+            }
+            Err(_) => {
+                std.io.println("")
+                break
+            }
+        }
+    }
+}
+
+effect fn run_file(path: string) -> void {
+    match std.fs.read_file(path) {
+        Ok(content) => {
+            let env: Env = make_initial_env()
+            match run_program(content, env) {
+                EvalOk(result, _) => {
+                    print_result(result)
+                }
+                EvalErr(msg) => {
+                    std.io.println("Error: " + msg)
+                }
+            }
+        }
+        Err(msg) => {
+            std.io.println("Error reading file: " + msg)
+        }
+    }
+}
+
+effect fn main() -> void {
+    std.io.println("Kira Lisp Interpreter")
+    std.io.println("Type (exit) or (quit) to exit")
+    std.io.println("")
+    let env: Env = make_initial_env()
+    repl_loop(env)
+}

@@ -369,17 +369,17 @@ examples/
 ## Success Criteria
 
 ### Minimum Viable Product (MVP)
-- [ ] Tokenize Lisp source code
-- [ ] Parse S-expressions into AST
-- [ ] Evaluate basic expressions (arithmetic, conditionals)
-- [ ] Define and call functions (lambda)
-- [ ] Working REPL
+- [x] Tokenize Lisp source code
+- [x] Parse S-expressions into AST
+- [x] Evaluate basic expressions (arithmetic, conditionals)
+- [x] Define and call functions (lambda)
+- [x] Working REPL
 
 ### Full Compiler
 - [ ] Compile Lisp to Kira source code
-- [ ] Support let, define, lambda, if, begin
-- [ ] List operations (cons, car, cdr)
-- [ ] Standard library of builtins
+- [x] Support let, define, lambda, if, begin
+- [x] List operations (cons, car, cdr)
+- [x] Standard library of builtins
 - [ ] File-based compilation
 
 ### Stretch Goals
@@ -387,6 +387,52 @@ examples/
 - [ ] Macro system (defmacro)
 - [ ] Module/import system
 - [ ] Source location tracking for errors
+
+---
+
+## Implementation Status
+
+### Completed (2024-01-26)
+
+The MVP interpreter is fully functional. All code is consolidated in `src/main.ki` for simplicity.
+
+**Working Features:**
+- Lexer: tokenizes integers, strings, symbols, booleans (#t/#f), parentheses, quotes
+- Parser: recursive descent parser for S-expressions with quote shorthand
+- Evaluator: full evaluation with proper lexical scoping
+- Special forms: `quote`, `if`, `define`, `lambda`, `let`, `begin`, `set!`, `and`, `or`
+- Builtins: arithmetic (`+`, `-`, `*`, `/`, `mod`), comparison (`=`, `<`, `>`, `<=`, `>=`), list ops (`cons`, `car`, `cdr`, `list`, `null?`, `pair?`, `length`), type predicates, equality, string operations
+- Recursive functions work correctly
+- Higher-order functions (map, filter patterns) work
+
+**Example Session:**
+```
+$ kira run src/main.ki
+Kira Lisp Interpreter
+Type (exit) or (quit) to exit
+
+lisp> (define (fact n) (if (<= n 1) 1 (* n (fact (- n 1)))))
+()
+lisp> (fact 10)
+3628800
+lisp> (define (map f lst) (if (null? lst) (quote ()) (cons (f (car lst)) (map f (cdr lst)))))
+()
+lisp> (map (lambda (x) (* x x)) (quote (1 2 3 4 5)))
+(1 4 9 16 25)
+```
+
+**Known Limitations:**
+- Float parsing not implemented (Kira lacks `std.string.parse_float`)
+- Multi-line REPL input not supported (expressions must be on single lines)
+- Some Kira stdlib functions return `Result` types requiring wrapper helpers
+
+**Files Created:**
+- `src/main.ki` - Complete interpreter (lexer, parser, evaluator, REPL)
+- `src/types.ki` - Standalone type definitions (for reference)
+- `src/lexer.ki` - Standalone lexer (for reference)
+- `src/parser.ki` - Standalone parser (for reference)
+- `src/env.ki` - Standalone environment ops (for reference)
+- `src/eval.ki` - Standalone evaluator (for reference)
 
 ---
 

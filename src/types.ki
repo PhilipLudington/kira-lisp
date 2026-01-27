@@ -1,0 +1,204 @@
+// Core Lisp value types for the compiler
+// Task 1.1: Define Lisp Value Types
+
+// Environment for variable bindings (forward declared for recursive reference)
+type Env = {
+    bindings: HashMap,
+    parent: Option[Env]
+}
+
+// The core value representation for Lisp
+type LispValue =
+    | LispNil
+    | LispBool(bool)
+    | LispInt(i64)
+    | LispFloat(f64)
+    | LispString(string)
+    | LispSymbol(string)
+    | LispList(List[LispValue])
+    | LispLambda(List[string], LispValue, Env)
+    | LispBuiltin(string)
+
+// Helper functions for creating LispValues
+fn make_nil() -> LispValue {
+    return LispNil
+}
+
+fn make_bool(b: bool) -> LispValue {
+    return LispBool(b)
+}
+
+fn make_int(n: i64) -> LispValue {
+    return LispInt(n)
+}
+
+fn make_float(n: f64) -> LispValue {
+    return LispFloat(n)
+}
+
+fn make_string(s: string) -> LispValue {
+    return LispString(s)
+}
+
+fn make_symbol(s: string) -> LispValue {
+    return LispSymbol(s)
+}
+
+fn make_list(items: List[LispValue]) -> LispValue {
+    return LispList(items)
+}
+
+fn make_lambda(params: List[string], body: LispValue, env: Env) -> LispValue {
+    return LispLambda(params, body, env)
+}
+
+fn make_builtin(name: string) -> LispValue {
+    return LispBuiltin(name)
+}
+
+// Type predicates
+fn is_nil(v: LispValue) -> bool {
+    match v {
+        LispNil => { return true }
+        _ => { return false }
+    }
+}
+
+fn is_bool(v: LispValue) -> bool {
+    match v {
+        LispBool(_) => { return true }
+        _ => { return false }
+    }
+}
+
+fn is_int(v: LispValue) -> bool {
+    match v {
+        LispInt(_) => { return true }
+        _ => { return false }
+    }
+}
+
+fn is_float(v: LispValue) -> bool {
+    match v {
+        LispFloat(_) => { return true }
+        _ => { return false }
+    }
+}
+
+fn is_number(v: LispValue) -> bool {
+    match v {
+        LispInt(_) => { return true }
+        LispFloat(_) => { return true }
+        _ => { return false }
+    }
+}
+
+fn is_string(v: LispValue) -> bool {
+    match v {
+        LispString(_) => { return true }
+        _ => { return false }
+    }
+}
+
+fn is_symbol(v: LispValue) -> bool {
+    match v {
+        LispSymbol(_) => { return true }
+        _ => { return false }
+    }
+}
+
+fn is_list(v: LispValue) -> bool {
+    match v {
+        LispList(_) => { return true }
+        _ => { return false }
+    }
+}
+
+fn is_lambda(v: LispValue) -> bool {
+    match v {
+        LispLambda(_, _, _) => { return true }
+        _ => { return false }
+    }
+}
+
+fn is_builtin(v: LispValue) -> bool {
+    match v {
+        LispBuiltin(_) => { return true }
+        _ => { return false }
+    }
+}
+
+fn is_procedure(v: LispValue) -> bool {
+    match v {
+        LispLambda(_, _, _) => { return true }
+        LispBuiltin(_) => { return true }
+        _ => { return false }
+    }
+}
+
+// Convert LispValue to string representation for display
+fn lisp_to_string(v: LispValue) -> string {
+    match v {
+        LispNil => { return "()" }
+        LispBool(b) => {
+            if b {
+                return "#t"
+            } else {
+                return "#f"
+            }
+        }
+        LispInt(n) => { return to_string(n) }
+        LispFloat(n) => { return to_string(n) }
+        LispString(s) => { return "\"" + escape_string(s) + "\"" }
+        LispSymbol(s) => { return s }
+        LispList(items) => { return list_to_string(items) }
+        LispLambda(params, _, _) => { return "#<lambda (" + join_strings(params, " ") + ")>" }
+        LispBuiltin(name) => { return "#<builtin:" + name + ">" }
+    }
+}
+
+// Helper to convert a list of LispValues to string
+fn list_to_string(items: List[LispValue]) -> string {
+    var sb: StringBuilder = std.builder.new()
+    sb = std.builder.append(sb, "(")
+    var first: bool = true
+    for item in items {
+        if not first {
+            sb = std.builder.append(sb, " ")
+        }
+        sb = std.builder.append(sb, lisp_to_string(item))
+        first = false
+    }
+    sb = std.builder.append(sb, ")")
+    return std.builder.build(sb)
+}
+
+// Helper to join strings with separator
+fn join_strings(strs: List[string], sep: string) -> string {
+    var sb: StringBuilder = std.builder.new()
+    var first: bool = true
+    for s in strs {
+        if not first {
+            sb = std.builder.append(sb, sep)
+        }
+        sb = std.builder.append(sb, s)
+        first = false
+    }
+    return std.builder.build(sb)
+}
+
+// Helper to escape string for printing
+fn escape_string(s: string) -> string {
+    var sb: StringBuilder = std.builder.new()
+    for c in std.string.chars(s) {
+        match c {
+            '\n' => { sb = std.builder.append(sb, "\\n") }
+            '\t' => { sb = std.builder.append(sb, "\\t") }
+            '\r' => { sb = std.builder.append(sb, "\\r") }
+            '\\' => { sb = std.builder.append(sb, "\\\\") }
+            '"' => { sb = std.builder.append(sb, "\\\"") }
+            _ => { sb = std.builder.append_char(sb, c) }
+        }
+    }
+    return std.builder.build(sb)
+}

@@ -1,0 +1,163 @@
+// S-Expression Parser
+// Task 2.1: Define Parse Result Types
+// Task 2.2: Implement S-Expression Parser
+
+// Forward declare types from lexer (these will be combined later)
+type Token =
+    | TokLParen
+    | TokRParen
+    | TokQuote
+    | TokInt(i64)
+    | TokFloat(f64)
+    | TokString(string)
+    | TokSymbol(string)
+    | TokBool(bool)
+    | TokEOF
+
+// Forward declare types from types.ki
+type LispValue =
+    | LispNil
+    | LispBool(bool)
+    | LispInt(i64)
+    | LispFloat(f64)
+    | LispString(string)
+    | LispSymbol(string)
+    | LispList(List[LispValue])
+
+// Parse result type
+type ParseResult =
+    | ParseOk(LispValue, List[Token])
+    | ParseErr(string)
+
+// Parse multiple expressions result
+type ParseAllResult =
+    | ParseAllOk(List[LispValue])
+    | ParseAllErr(string)
+
+// Parse a single expression from tokens
+fn parse_expr(tokens: List[Token]) -> ParseResult {
+    match tokens {
+        Nil => { return ParseErr("Unexpected end of input") }
+        Cons(token, rest) => {
+            match token {
+                TokInt(n) => { return ParseOk(LispInt(n), rest) }
+                TokFloat(n) => { return ParseOk(LispFloat(n), rest) }
+                TokString(s) => { return ParseOk(LispString(s), rest) }
+                TokSymbol(s) => { return ParseOk(LispSymbol(s), rest) }
+                TokBool(b) => { return ParseOk(LispBool(b), rest) }
+                TokLParen => { return parse_list(rest) }
+                TokRParen => { return ParseErr("Unexpected closing parenthesis") }
+                TokQuote => { return parse_quoted(rest) }
+                TokEOF => { return ParseErr("Unexpected end of file") }
+            }
+        }
+    }
+}
+
+// Parse a list (after the opening paren has been consumed)
+fn parse_list(tokens: List[Token]) -> ParseResult {
+    var current: List[Token] = tokens
+    var elements: List[LispValue] = Nil
+
+    loop {
+        match current {
+            Nil => { return ParseErr("Unclosed list: expected ')'") }
+            Cons(token, rest) => {
+                match token {
+                    TokRParen => {
+                        // End of list - return elements in correct order
+                        return ParseOk(LispList(std.list.reverse(elements)), rest)
+                    }
+                    TokEOF => {
+                        return ParseErr("Unclosed list: unexpected end of file")
+                    }
+                    _ => {
+                        // Parse the next expression
+                        match parse_expr(current) {
+                            ParseOk(value, remaining) => {
+                                elements = Cons(value, elements)
+                                current = remaining
+                            }
+                            ParseErr(msg) => { return ParseErr(msg) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Parse quoted expression ('expr -> (quote expr))
+fn parse_quoted(tokens: List[Token]) -> ParseResult {
+    match parse_expr(tokens) {
+        ParseOk(value, rest) => {
+            // Construct (quote value)
+            let quote_sym: LispValue = LispSymbol("quote")
+            let quoted: LispValue = LispList(Cons(quote_sym, Cons(value, Nil)))
+            return ParseOk(quoted, rest)
+        }
+        ParseErr(msg) => { return ParseErr(msg) }
+    }
+}
+
+// Parse all expressions from a token list
+fn parse_all(tokens: List[Token]) -> ParseAllResult {
+    var current: List[Token] = tokens
+    var exprs: List[LispValue] = Nil
+
+    loop {
+        match current {
+            Nil => {
+                return ParseAllOk(std.list.reverse(exprs))
+            }
+            Cons(token, _) => {
+                match token {
+                    TokEOF => {
+                        return ParseAllOk(std.list.reverse(exprs))
+                    }
+                    _ => {
+                        match parse_expr(current) {
+                            ParseOk(value, remaining) => {
+                                exprs = Cons(value, exprs)
+                                current = remaining
+                            }
+                            ParseErr(msg) => { return ParseAllErr(msg) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Convert LispValue to string for debugging
+fn lisp_to_string(v: LispValue) -> string {
+    match v {
+        LispNil => { return "()" }
+        LispBool(b) => {
+            if b {
+                return "#t"
+            } else {
+                return "#f"
+            }
+        }
+        LispInt(n) => { return to_string(n) }
+        LispFloat(n) => { return to_string(n) }
+        LispString(s) => { return "\"" + s + "\"" }
+        LispSymbol(s) => { return s }
+        LispList(items) => {
+            var sb: StringBuilder = std.builder.new()
+            sb = std.builder.append(sb, "(")
+            var first: bool = true
+            for item in items {
+                if not first {
+                    sb = std.builder.append(sb, " ")
+                }
+                sb = std.builder.append(sb, lisp_to_string(item))
+                first = false
+            }
+            sb = std.builder.append(sb, ")")
+            return std.builder.build(sb)
+        }
+    }
+}
