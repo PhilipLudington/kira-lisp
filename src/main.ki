@@ -62,32 +62,19 @@ type Lexer = {
     length: i32
 }
 
-// Helper to get string length (unwrap Result)
-fn str_len(s: string) -> i32 {
-    match std.string.length(s) {
-        Ok(n) => { return n }
-        Err(_) => { return 0 }
-    }
-}
-
-// Helper to get substring (unwrap Result)
+// Helper to get substring (unwrap Option)
 fn substr(s: string, start: i32, end: i32) -> string {
     match std.string.substring(s, start, end) {
-        Ok(result) => { return result }
-        Err(_) => { return "" }
+        Some(result) => { return result }
+        None => { return "" }
     }
 }
 
-// Helper to get char at index (unwrap Result and Option)
+// Helper to get char at index (unwrap Option)
 fn char_at(s: string, idx: i32) -> char {
     match std.string.char_at(s, idx) {
-        Ok(opt) => {
-            match opt {
-                Some(c) => { return c }
-                None => { return '\0' }
-            }
-        }
-        Err(_) => { return '\0' }
+        Some(c) => { return c }
+        None => { return '\0' }
     }
 }
 
@@ -95,7 +82,7 @@ fn lexer_new(input: string) -> Lexer {
     return Lexer {
         input: input,
         pos: 0,
-        length: str_len(input)
+        length: std.string.length(input)
     }
 }
 
@@ -487,26 +474,12 @@ fn env_define_all(env: Env, names: List[string], values: List[LispValue]) -> Res
 // Evaluator
 // ============================================================================
 
-// Helper to convert i64 to string using StringBuilder
-fn i64_to_str(n: i64) -> string {
-    var sb: StringBuilder = std.builder.new()
-    sb = std.builder.append_int(sb, n)
-    return std.builder.build(sb)
-}
-
-// Helper to convert f64 to string using StringBuilder
-fn f64_to_str(n: f64) -> string {
-    var sb: StringBuilder = std.builder.new()
-    sb = std.builder.append_float(sb, n)
-    return std.builder.build(sb)
-}
-
 fn lisp_to_string(v: LispValue) -> string {
     match v {
         LispNil => { return "()" }
         LispBool(b) => { if b { return "#t" } else { return "#f" } }
-        LispInt(n) => { return i64_to_str(n) }
-        LispFloat(n) => { return f64_to_str(n) }
+        LispInt(n) => { return to_string(n) }
+        LispFloat(n) => { return to_string(n) }
         LispString(s) => { return "\"" + s + "\"" }
         LispSymbol(s) => { return s }
         LispList(items) => {
@@ -1154,7 +1127,7 @@ fn builtin_string_append(args: List[LispValue], env: Env) -> EvalResult {
 
 fn builtin_string_length(args: List[LispValue], env: Env) -> EvalResult {
     match args {
-        Cons(LispString(s), Nil) => { return EvalOk(LispInt(str_len(s)), env) }
+        Cons(LispString(s), Nil) => { return EvalOk(LispInt(std.string.length(s)), env) }
         _ => { return EvalErr("string-length: requires one string") }
     }
 }

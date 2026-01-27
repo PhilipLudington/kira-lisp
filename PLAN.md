@@ -392,9 +392,16 @@ examples/
 
 ## Implementation Status
 
-### Completed (2024-01-26)
+### Completed (2024-01-26, updated 2026-01-27)
 
 The MVP interpreter is fully functional. All code is consolidated in `src/main.ki` for simplicity.
+
+**2026-01-27 Update:** Removed workarounds for Kira stdlib bugs that have been fixed:
+- `std.string.length()` now returns `i32` directly (was `Result[i32, string]`)
+- `std.string.char_at()` now returns `Option[char]` directly (was `Result[Option[char], string]`)
+- `std.string.substring()` now returns `Option[string]` (was `Result[string, string]`)
+- `std.string.parse_float()` now exists
+- `to_string()` now works correctly on pattern-extracted values
 
 **Working Features:**
 - Lexer: tokenizes integers, strings, symbols, booleans (#t/#f), parentheses, quotes
@@ -422,9 +429,7 @@ lisp> (map (lambda (x) (* x x)) (quote (1 2 3 4 5)))
 ```
 
 **Known Limitations:**
-- Float parsing not implemented (Kira lacks `std.string.parse_float`)
 - Multi-line REPL input not supported (expressions must be on single lines)
-- Some Kira stdlib functions return `Result` types requiring wrapper helpers
 
 **Files Created:**
 - `src/main.ki` - Complete interpreter (lexer, parser, evaluator, REPL)
