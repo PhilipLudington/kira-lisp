@@ -385,7 +385,7 @@ examples/
 ### Stretch Goals
 - [x] Tail call optimization
 - [x] Macro system (defmacro, quasiquote)
-- [ ] Module/import system
+- [x] Module/import system (basic - see limitations below)
 - [ ] Source location tracking for errors
 
 ---
@@ -429,11 +429,21 @@ The MVP interpreter is fully functional, and the compiler infrastructure (IR, tr
 - **Macro expansion**: Macros receive unevaluated arguments and return expanded code
 - Example macros: `when`, `unless`, `swap`, `inc!` all work correctly
 
+**2026-01-27 Update (Modules):** Added basic module system:
+- **Import**: `(import "path/to/module.lisp")` loads and evaluates a module file, importing all its top-level definitions into the current environment
+- **Provide**: `(provide sym1 sym2 ...)` declares which symbols a module exports (recorded but not yet enforced)
+
+**2026-01-27 Update (Bug Fixes):** All previously documented Kira language bugs have been fixed:
+- Bug 1: `for` loop on empty `List[RecursiveType]` - **Fixed**
+- Bug 2: HashMap `any` type round-trip for recursive types - **Fixed**
+- Bug 3: Pattern match extraction of `List[RecursiveType]` - **Fixed**
+- Module system features (explicit symbol lists, circular import detection) can now be implemented
+
 **Working Features:**
 - Lexer: tokenizes integers, strings, symbols, booleans (#t/#f), parentheses, quotes
 - Parser: recursive descent parser for S-expressions with quote shorthand
 - Evaluator: full evaluation with proper lexical scoping
-- Special forms: `quote`, `quasiquote`, `if`, `define`, `defmacro`, `lambda`, `let`, `begin`, `set!`, `and`, `or`
+- Special forms: `quote`, `quasiquote`, `if`, `define`, `defmacro`, `lambda`, `let`, `begin`, `set!`, `and`, `or`, `import`, `provide`
 - Builtins: arithmetic (`+`, `-`, `*`, `/`, `mod`), comparison (`=`, `<`, `>`, `<=`, `>=`), list ops (`cons`, `car`, `cdr`, `list`, `null?`, `pair?`, `length`), type predicates, equality, string operations, I/O (`display`, `newline`)
 - Recursive functions work correctly
 - Higher-order functions (map, filter patterns) work
@@ -467,8 +477,6 @@ compile_file("examples/factorial.lisp", "examples/factorial_compiled.ki")
 
 **Known Limitations:**
 - Multi-line REPL input not supported (expressions must be on single lines)
-- Kira doesn't support command-line arguments, so mode selection is via code modification
-- Kira bug: `for` loops on empty `List[RecursiveType]` crash (workarounds in place)
 
 **Files Created:**
 - `src/main.ki` - Complete interpreter and compiler (lexer, parser, evaluator, IR, transform, codegen, REPL)
@@ -497,10 +505,9 @@ compile_file("examples/factorial.lisp", "examples/factorial_compiled.ki")
 3. **Mutability**: Lisp's `set!` requires mutable environments; use `var` bindings in Kira
 4. **Performance**: Interpreter may be slow; compiler with Kira backend will be faster
 
-### Known Kira Bugs (with workarounds in place)
-1. **`for` loop on empty `List[RecursiveType]` crashes**: When iterating over an empty list of a recursive sum type (like `List[LispValue]` or `List[IRExpr]`), Kira throws a TypeMismatch error. Workaround: Always check `match list { Nil => ... _ => { for ... } }` before using `for` loops.
-2. **`if` is a statement, not an expression**: Kira's `if` doesn't return a value. Workaround: Use immediately-invoked function expressions (IIFE) with `match` inside: `(fn() -> T { match cond { true => { return x } false => { return y } } })()`
-3. **No command-line argument support**: Kira doesn't have `std.env.args()` or similar. Workaround: Modify source code to switch between modes.
+### Kira Language Notes
+1. **`if` is a statement, not an expression**: Kira's `if` doesn't return a value. Workaround: Use immediately-invoked function expressions (IIFE) with `match` inside: `(fn() -> T { match cond { true => { return x } false => { return y } } })()`
+2. **Command-line arguments**: Kira now supports `std.env.args()` which returns `List[string]`.
 
 ### References
 - [Structure and Interpretation of Computer Programs](https://mitpress.mit.edu/sites/default/files/sicp/index.html)
