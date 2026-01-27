@@ -1,0 +1,16 @@
+{
+  "builds": [
+    {
+      "name": "Kira Check",
+      "resultsFile": ".build-results.json",
+      "command": "./build.sh"
+    }
+  ],
+  "tests": [
+    {
+      "name": "Example Tests",
+      "resultsFile": ".test-results.json",
+      "command": "./run-tests.sh"
+    }
+  ]
+}
