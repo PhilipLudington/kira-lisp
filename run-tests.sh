@@ -84,6 +84,22 @@ test_compile() {
     fi
 }
 
+# Test: Tail call optimization (infinite loop doesn't crash)
+test_tco() {
+    # An infinite loop with TCO should run until timeout, not stack overflow
+    local output
+    output=$(timeout 1 bash -c 'echo "(define (inf) (inf)) (inf)" | kira run src/main.ki 2>&1' 2>&1 || true)
+    # Check it didn't crash with stack overflow
+    if [[ "$output" != *"overflow"* ]] && [[ "$output" != *"Segmentation"* ]] && [[ "$output" != *"SIGSEGV"* ]]; then
+        PASSED=$((PASSED + 1))
+        echo "PASS: tco"
+    else
+        FAILED=$((FAILED + 1))
+        FAILURES+=("tco: expected no stack overflow, got crash")
+        echo "FAIL: tco"
+    fi
+}
+
 echo "Running tests..."
 echo
 
@@ -92,6 +108,7 @@ test_arithmetic
 test_lists
 test_lambda
 test_compile
+test_tco
 
 TOTAL=$((PASSED + FAILED))
 

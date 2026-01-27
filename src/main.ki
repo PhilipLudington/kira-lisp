@@ -51,6 +51,7 @@ type ParseAllResult =
 type EvalResult =
     | EvalOk(LispValue, Env)
     | EvalErr(string)
+    | TailCall(LispValue, List[LispValue], Env)  // func, args, env - for TCO
 
 // ============================================================================
 // Lexer
@@ -514,6 +515,32 @@ fn is_truthy(v: LispValue) -> bool {
     match v { LispBool(b) => { return b } _ => { return true } }
 }
 
+// ============================================================================
+// Tail Call Optimization (Trampoline)
+// ============================================================================
+
+// The trampoline keeps evaluating until we get a final result (not a TailCall)
+// This implements proper tail recursion without growing the stack
+effect fn trampoline(initial: EvalResult) -> EvalResult {
+    var current: EvalResult = initial
+    loop {
+        match current {
+            TailCall(func, args, env) => {
+                // Apply the function without recursion
+                current = apply_tail(func, args, env)
+            }
+            EvalOk(_, _) => { return current }
+            EvalErr(_) => { return current }
+        }
+    }
+}
+
+// Evaluate an expression with TCO support
+// This is the main entry point for evaluation from REPL/file execution
+effect fn eval_tco(expr: LispValue, env: Env) -> EvalResult {
+    return trampoline(eval(expr, env))
+}
+
 effect fn eval(expr: LispValue, env: Env) -> EvalResult {
     match expr {
         LispNil => { return EvalOk(LispNil, env) }
@@ -563,11 +590,13 @@ fn eval_quote(args: List[LispValue], env: Env) -> EvalResult {
     }
 }
 
-fn eval_if(args: List[LispValue], env: Env) -> EvalResult {
+effect fn eval_if(args: List[LispValue], env: Env) -> EvalResult {
     match args {
         Cons(cond, Cons(then_expr, else_part)) => {
-            match eval(cond, env) {
+            // Condition must be fully evaluated (not in tail position)
+            match trampoline(eval(cond, env)) {
                 EvalOk(cond_val, env2) => {
+                    // Then/else branches are in tail position - propagate TailCall
                     if is_truthy(cond_val) {
                         return eval(then_expr, env2)
                     } else {
@@ -579,21 +608,24 @@ fn eval_if(args: List[LispValue], env: Env) -> EvalResult {
                     }
                 }
                 EvalErr(msg) => { return EvalErr(msg) }
+                TailCall(_, _, _) => { return EvalErr("Internal error: trampoline returned TailCall") }
             }
         }
         _ => { return EvalErr("if requires 2-3 arguments") }
     }
 }
 
-fn eval_define(args: List[LispValue], env: Env) -> EvalResult {
+effect fn eval_define(args: List[LispValue], env: Env) -> EvalResult {
     match args {
         Cons(LispSymbol(name), Cons(value_expr, Nil)) => {
-            match eval(value_expr, env) {
+            // Value is not in tail position - fully evaluate
+            match trampoline(eval(value_expr, env)) {
                 EvalOk(value, env2) => {
                     let new_env: Env = env_define(env2, name, value)
                     return EvalOk(LispNil, new_env)
                 }
                 EvalErr(msg) => { return EvalErr(msg) }
+                TailCall(_, _, _) => { return EvalErr("Internal error: trampoline returned TailCall") }
             }
         }
         Cons(LispList(name_and_params), body) => {
@@ -649,50 +681,61 @@ fn eval_lambda(args: List[LispValue], env: Env) -> EvalResult {
     }
 }
 
-fn eval_let(args: List[LispValue], env: Env) -> EvalResult {
+effect fn eval_let(args: List[LispValue], env: Env) -> EvalResult {
     match args {
         Cons(LispList(bindings), body) => {
             var let_env: Env = env_extend(env)
             for binding in bindings {
                 match binding {
                     LispList(Cons(LispSymbol(name), Cons(value_expr, Nil))) => {
-                        match eval(value_expr, env) {
+                        // Binding values are not in tail position - fully evaluate
+                        match trampoline(eval(value_expr, env)) {
                             EvalOk(value, _) => { let_env = env_define(let_env, name, value) }
                             EvalErr(msg) => { return EvalErr(msg) }
+                            TailCall(_, _, _) => { return EvalErr("Internal error: trampoline returned TailCall") }
                         }
                     }
                     _ => { return EvalErr("let: invalid binding") }
                 }
             }
+            // Body is in tail position - will propagate TailCall
             return eval_begin_list(body, let_env)
         }
         _ => { return EvalErr("let: invalid syntax") }
     }
 }
 
-fn eval_begin(args: List[LispValue], env: Env) -> EvalResult {
+effect fn eval_begin(args: List[LispValue], env: Env) -> EvalResult {
     return eval_begin_list(args, env)
 }
 
-fn eval_begin_list(exprs: List[LispValue], env: Env) -> EvalResult {
-    var current_env: Env = env
-    var result: LispValue = LispNil
-    for expr in exprs {
-        match eval(expr, current_env) {
-            EvalOk(value, new_env) => {
-                result = value
-                current_env = new_env
+// Evaluate a sequence of expressions, with the last one in tail position
+effect fn eval_begin_list(exprs: List[LispValue], env: Env) -> EvalResult {
+    match exprs {
+        Nil => { return EvalOk(LispNil, env) }
+        Cons(last_expr, Nil) => {
+            // Single expression - it's in tail position
+            return eval(last_expr, env)
+        }
+        Cons(first_expr, rest) => {
+            // Not the last - fully evaluate it
+            match trampoline(eval(first_expr, env)) {
+                EvalOk(_, new_env) => {
+                    // Continue with rest, last one will be in tail position
+                    return eval_begin_list(rest, new_env)
+                }
+                EvalErr(msg) => { return EvalErr(msg) }
+                TailCall(_, _, _) => { return EvalErr("Internal error: trampoline returned TailCall") }
             }
-            EvalErr(msg) => { return EvalErr(msg) }
         }
     }
-    return EvalOk(result, current_env)
 }
 
-fn eval_set(args: List[LispValue], env: Env) -> EvalResult {
+effect fn eval_set(args: List[LispValue], env: Env) -> EvalResult {
     match args {
         Cons(LispSymbol(name), Cons(value_expr, Nil)) => {
-            match eval(value_expr, env) {
+            // Value is not in tail position - fully evaluate
+            match trampoline(eval(value_expr, env)) {
                 EvalOk(value, env2) => {
                     match env_set(env2, name, value) {
                         Ok(new_env) => { return EvalOk(LispNil, new_env) }
@@ -700,51 +743,73 @@ fn eval_set(args: List[LispValue], env: Env) -> EvalResult {
                     }
                 }
                 EvalErr(msg) => { return EvalErr(msg) }
+                TailCall(_, _, _) => { return EvalErr("Internal error: trampoline returned TailCall") }
             }
         }
         _ => { return EvalErr("set! requires variable and value") }
     }
 }
 
-fn eval_and(args: List[LispValue], env: Env) -> EvalResult {
-    var current_env: Env = env
-    var result: LispValue = LispBool(true)
-    for arg in args {
-        match eval(arg, current_env) {
-            EvalOk(value, new_env) => {
-                current_env = new_env
-                if not is_truthy(value) { return EvalOk(LispBool(false), current_env) }
-                result = value
+// and: (and e1 e2 ... en) - last expression is in tail position
+effect fn eval_and(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Nil => { return EvalOk(LispBool(true), env) }
+        Cons(last_arg, Nil) => {
+            // Last argument is in tail position
+            return eval(last_arg, env)
+        }
+        Cons(first_arg, rest) => {
+            // Not last - fully evaluate
+            match trampoline(eval(first_arg, env)) {
+                EvalOk(value, new_env) => {
+                    if not is_truthy(value) {
+                        return EvalOk(LispBool(false), new_env)
+                    }
+                    return eval_and(rest, new_env)
+                }
+                EvalErr(msg) => { return EvalErr(msg) }
+                TailCall(_, _, _) => { return EvalErr("Internal error: trampoline returned TailCall") }
             }
-            EvalErr(msg) => { return EvalErr(msg) }
         }
     }
-    return EvalOk(result, current_env)
 }
 
-fn eval_or(args: List[LispValue], env: Env) -> EvalResult {
-    var current_env: Env = env
-    for arg in args {
-        match eval(arg, current_env) {
-            EvalOk(value, new_env) => {
-                current_env = new_env
-                if is_truthy(value) { return EvalOk(value, current_env) }
+// or: (or e1 e2 ... en) - last expression is in tail position
+effect fn eval_or(args: List[LispValue], env: Env) -> EvalResult {
+    match args {
+        Nil => { return EvalOk(LispBool(false), env) }
+        Cons(last_arg, Nil) => {
+            // Last argument is in tail position
+            return eval(last_arg, env)
+        }
+        Cons(first_arg, rest) => {
+            // Not last - fully evaluate
+            match trampoline(eval(first_arg, env)) {
+                EvalOk(value, new_env) => {
+                    if is_truthy(value) {
+                        return EvalOk(value, new_env)
+                    }
+                    return eval_or(rest, new_env)
+                }
+                EvalErr(msg) => { return EvalErr(msg) }
+                TailCall(_, _, _) => { return EvalErr("Internal error: trampoline returned TailCall") }
             }
-            EvalErr(msg) => { return EvalErr(msg) }
         }
     }
-    return EvalOk(LispBool(false), current_env)
 }
 
 effect fn eval_application(op_expr: LispValue, args: List[LispValue], env: Env) -> EvalResult {
-    match eval(op_expr, env) {
+    // Operator is not in tail position - fully evaluate
+    match trampoline(eval(op_expr, env)) {
         EvalOk(op, env2) => {
             match eval_list_values(args, env2) {
+                // apply may return TailCall which will be propagated up
                 Ok((arg_values, env3)) => { return apply(op, arg_values, env3) }
                 Err(msg) => { return EvalErr(msg) }
             }
         }
         EvalErr(msg) => { return EvalErr(msg) }
+        TailCall(_, _, _) => { return EvalErr("Internal error: trampoline returned TailCall") }
     }
 }
 
@@ -752,12 +817,14 @@ effect fn eval_list_values(exprs: List[LispValue], env: Env) -> Result[(List[Lis
     var current_env: Env = env
     var values: List[LispValue] = Nil
     for expr in exprs {
-        match eval(expr, current_env) {
+        // Use trampoline to fully resolve each argument (strict evaluation)
+        match trampoline(eval(expr, current_env)) {
             EvalOk(value, new_env) => {
                 values = Cons(value, values)
                 current_env = new_env
             }
             EvalErr(msg) => { return Err(msg) }
+            TailCall(_, _, _) => { return Err("Internal error: trampoline returned TailCall") }
         }
     }
     return Ok((std.list.reverse(values), current_env))
@@ -776,10 +843,9 @@ effect fn apply(func: LispValue, args: List[LispValue], env: Env) -> EvalResult 
             let call_env: Env = env_extend(base_env)
             match env_define_all(call_env, params, args) {
                 Ok(bound_env) => {
-                    match eval(body, bound_env) {
-                        EvalOk(result, _) => { return EvalOk(result, env) }
-                        EvalErr(msg) => { return EvalErr(msg) }
-                    }
+                    // Return a TailCall to be handled by the trampoline
+                    // This is the key to TCO - we don't recursively call eval here
+                    return TailCall(body, Nil, bound_env)
                 }
                 Err(msg) => { return EvalErr(msg) }
             }
@@ -787,6 +853,13 @@ effect fn apply(func: LispValue, args: List[LispValue], env: Env) -> EvalResult 
         LispBuiltin(name) => { return apply_builtin(name, args, env) }
         _ => { return EvalErr("Cannot apply: " + lisp_to_string(func)) }
     }
+}
+
+// apply_tail is called by the trampoline to handle TailCall results
+// It's different from apply because the "func" here is actually the body expression to evaluate
+effect fn apply_tail(expr: LispValue, args: List[LispValue], env: Env) -> EvalResult {
+    // The TailCall stores the body expression, empty args (not used), and the bound env
+    return eval(expr, env)
 }
 
 // ============================================================================
@@ -2388,7 +2461,8 @@ effect fn run_program(source: string, env: Env) -> EvalResult {
         LexOk(tokens) => {
             match parse_all(tokens) {
                 ParseAllOk(exprs) => {
-                    return eval_begin_list(exprs, env)
+                    // Use trampoline to get final result with TCO
+                    return trampoline(eval_begin_list(exprs, env))
                 }
                 ParseAllErr(msg) => { return EvalErr("Parse error: " + msg) }
             }
@@ -2419,13 +2493,17 @@ effect fn repl_loop(env: Env) -> void {
                         LexOk(tokens) => {
                             match parse_all(tokens) {
                                 ParseAllOk(exprs) => {
-                                    match eval_begin_list(exprs, current_env) {
+                                    // Use trampoline for TCO
+                                    match trampoline(eval_begin_list(exprs, current_env)) {
                                         EvalOk(result, new_env) => {
                                             print_result(result)
                                             current_env = new_env
                                         }
                                         EvalErr(msg) => {
                                             std.io.println("Error: " + msg)
+                                        }
+                                        TailCall(_, _, _) => {
+                                            std.io.println("Internal error: trampoline returned TailCall")
                                         }
                                     }
                                 }

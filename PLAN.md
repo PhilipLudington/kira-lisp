@@ -383,7 +383,7 @@ examples/
 - [x] File-based compilation (via code modification, no CLI args in Kira)
 
 ### Stretch Goals
-- [ ] Tail call optimization
+- [x] Tail call optimization
 - [ ] Macro system (defmacro)
 - [ ] Module/import system
 - [ ] Source location tracking for errors
@@ -407,6 +407,14 @@ The MVP interpreter is fully functional, and the compiler infrastructure (IR, tr
 **2026-01-27 Update (Stdlib):** Removed workarounds for fixed Kira stdlib bugs:
 - `std.string.length()` now returns `i32` directly (was `Result[i32, string]`)
 - `std.string.char_at()` now returns `Option[char]` directly (was `Result[Option[char], string]`)
+
+**2026-01-27 Update (TCO):** Added Tail Call Optimization:
+- Implemented trampoline-based TCO for proper tail recursion
+- Added `TailCall` variant to `EvalResult` for deferred function calls
+- Modified `apply` to return `TailCall` instead of recursively evaluating lambda bodies
+- Updated `eval_if`, `eval_begin`, `eval_let`, `eval_and`, `eval_or` to propagate tail calls
+- Infinite loops like `(define (inf) (inf)) (inf)` now run without stack overflow
+- All expressions in non-tail positions are fully evaluated via `trampoline()`
 - `std.string.substring()` now returns `Option[string]` (was `Result[string, string]`)
 - `std.string.parse_float()` now exists
 - `to_string()` now works correctly on pattern-extracted values
