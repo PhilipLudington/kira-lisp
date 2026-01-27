@@ -2559,18 +2559,8 @@ fn print_usage() -> void {
     std.io.println("  help                Show this help")
 }
 
-// Convert args to a standard List (std.env.args() returns an internal type that doesn't pattern match)
-fn convert_args(args: List[string]) -> List[string] {
-    var result: List[string] = Nil
-    for arg in args {
-        result = Cons(arg, result)
-    }
-    return std.list.reverse(result)
-}
-
 effect fn main() -> void {
-    let raw_args: List[string] = std.env.args()
-    let args: List[string] = convert_args(raw_args)
+    let args: List[string] = std.env.args()
     match args {
         Nil => {
             std.io.println("Kira Lisp Interpreter")
