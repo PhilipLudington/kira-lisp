@@ -12,17 +12,8 @@
 ; List Operations
 ; ============================================================================
 
-; Apply a function to each element of a list
-; Implemented via foldr to avoid recursive call issues
-(define (map f lst)
-  (foldr (lambda (x acc) (cons (f x) acc)) '() lst))
-
-; Keep elements that satisfy predicate
-; Implemented via foldr to avoid recursive call issues
-(define (filter pred lst)
-  (foldr (lambda (x acc) (if (pred x) (cons x acc) acc)) '() lst))
-
 ; Left fold: ((((init op e1) op e2) op e3) ...)
+; Defined first since other functions depend on it
 (define (foldl f init lst)
   (if (null? lst)
       init
@@ -37,6 +28,14 @@
 ; Aliases for fold (reduce = foldl by convention)
 (define reduce foldl)
 (define fold foldl)
+
+; Apply a function to each element of a list
+(define (map f lst)
+  (foldr (lambda (x acc) (cons (f x) acc)) '() lst))
+
+; Keep elements that satisfy predicate
+(define (filter pred lst)
+  (foldr (lambda (x acc) (if (pred x) (cons x acc) acc)) '() lst))
 
 ; Take first n elements
 (define (take n lst)
@@ -56,7 +55,7 @@
       lst2
       (cons (car lst1) (append (cdr lst1) lst2))))
 
-; Reverse a list (using explicit recursion to avoid closure bug)
+; Reverse a list
 (define (reverse lst)
   (define (rev-helper lst acc)
     (if (null? lst)

@@ -49,6 +49,7 @@ type LispValue =
     | LispSymbol(string, Option[SourceLoc])
     | LispList(List[LispValue], Option[SourceLoc])
     | LispLambda(List[string], LispValue, Env)
+    | LispRecursiveLambda(string, List[string], LispValue, Env)  // name, params, body, closure - for named recursive functions
     | LispBuiltin(string)
     | LispMacro(List[string], LispValue, Env)
 
@@ -627,6 +628,20 @@ fn lisp_to_string(v: LispValue) -> string {
             sb = std.builder.append(sb, ")>")
             return std.builder.build(sb)
         }
+        LispRecursiveLambda(name, params, _, _) => {
+            var sb: StringBuilder = std.builder.new()
+            sb = std.builder.append(sb, "#<lambda ")
+            sb = std.builder.append(sb, name)
+            sb = std.builder.append(sb, " (")
+            var first: bool = true
+            for p in params {
+                if not first { sb = std.builder.append(sb, " ") }
+                sb = std.builder.append(sb, p)
+                first = false
+            }
+            sb = std.builder.append(sb, ")>")
+            return std.builder.build(sb)
+        }
         LispBuiltin(name) => { return "#<builtin:" + name + ">" }
         LispMacro(params, _, _) => {
             var sb: StringBuilder = std.builder.new()
@@ -693,6 +708,7 @@ effect fn eval(expr: LispValue, env: Env) -> EvalResult {
             }
         }
         LispLambda(p, b, e) => { return EvalOk(LispLambda(p, b, e), env) }
+        LispRecursiveLambda(n, p, b, e) => { return EvalOk(LispRecursiveLambda(n, p, b, e), env) }
         LispBuiltin(n) => { return EvalOk(LispBuiltin(n), env) }
         LispMacro(p, b, e) => { return EvalOk(LispMacro(p, b, e), env) }
     }
@@ -912,14 +928,15 @@ effect fn eval_if(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> Ev
         Cons(cond, Cons(then_expr, else_part)) => {
             // Condition must be fully evaluated (not in tail position)
             match trampoline(eval(cond, env)) {
-                EvalOk(cond_val, env2) => {
+                EvalOk(cond_val, _) => {
                     // Then/else branches are in tail position - propagate TailCall
+                    // Use original env, not the env returned by condition evaluation
                     if is_truthy(cond_val) {
-                        return eval(then_expr, env2)
+                        return eval(then_expr, env)
                     } else {
                         match else_part {
-                            Cons(else_expr, Nil) => { return eval(else_expr, env2) }
-                            Nil => { return EvalOk(LispNil, env2) }
+                            Cons(else_expr, Nil) => { return eval(else_expr, env) }
+                            Nil => { return EvalOk(LispNil, env) }
                             _ => { return EvalErr("if: too many arguments", loc) }
                         }
                     }
@@ -937,8 +954,9 @@ effect fn eval_define(args: List[LispValue], loc: Option[SourceLoc], env: Env) -
         Cons(LispSymbol(name, _), Cons(value_expr, Nil)) => {
             // Value is not in tail position - fully evaluate
             match trampoline(eval(value_expr, env)) {
-                EvalOk(value, env2) => {
-                    let new_env: Env = env_define(env2, name, value)
+                EvalOk(value, _) => {
+                    // Use original env - don't let function calls during value evaluation pollute bindings
+                    let new_env: Env = env_define(env, name, value)
                     return EvalOk(LispNil, new_env)
                 }
                 EvalErr(msg, eloc) => { return EvalErr(msg, eloc) }
@@ -951,7 +969,9 @@ effect fn eval_define(args: List[LispValue], loc: Option[SourceLoc], env: Env) -
                     match extract_param_names(params) {
                         Ok(param_names) => {
                             let lambda_body: LispValue = make_begin(body)
-                            let lambda: LispValue = LispLambda(param_names, lambda_body, env)
+                            // Use LispRecursiveLambda for named function definitions
+                            // This stores the function name so apply can inject self-reference
+                            let lambda: LispValue = LispRecursiveLambda(name, param_names, lambda_body, env)
                             let new_env: Env = env_define(env, name, lambda)
                             return EvalOk(LispNil, new_env)
                         }
@@ -1078,11 +1098,12 @@ effect fn eval_and(args: List[LispValue], env: Env) -> EvalResult {
         Cons(first_arg, rest) => {
             // Not last - fully evaluate
             match trampoline(eval(first_arg, env)) {
-                EvalOk(value, new_env) => {
+                EvalOk(value, _) => {
+                    // Use original env - don't let function calls pollute the environment
                     if not is_truthy(value) {
-                        return EvalOk(LispBool(false), new_env)
+                        return EvalOk(LispBool(false), env)
                     }
-                    return eval_and(rest, new_env)
+                    return eval_and(rest, env)
                 }
                 EvalErr(msg, loc) => { return EvalErr(msg, loc) }
                 TailCall(_, _, _) => { return EvalErr("Internal error: trampoline returned TailCall", None) }
@@ -1102,11 +1123,12 @@ effect fn eval_or(args: List[LispValue], env: Env) -> EvalResult {
         Cons(first_arg, rest) => {
             // Not last - fully evaluate
             match trampoline(eval(first_arg, env)) {
-                EvalOk(value, new_env) => {
+                EvalOk(value, _) => {
+                    // Use original env - don't let function calls pollute the environment
                     if is_truthy(value) {
-                        return EvalOk(value, new_env)
+                        return EvalOk(value, env)
                     }
-                    return eval_or(rest, new_env)
+                    return eval_or(rest, env)
                 }
                 EvalErr(msg, loc) => { return EvalErr(msg, loc) }
                 TailCall(_, _, _) => { return EvalErr("Internal error: trampoline returned TailCall", None) }
@@ -1440,37 +1462,45 @@ effect fn eval_application(op_expr: LispValue, args: List[LispValue], loc: Optio
 }
 
 effect fn eval_list_values(exprs: List[LispValue], env: Env) -> EvalResult {
-    var current_env: Env = env
+    // Evaluate all arguments in the SAME environment
+    // This follows standard Scheme semantics: arguments don't see side effects from each other
     var values: List[LispValue] = Nil
     for expr in exprs {
         // Use trampoline to fully resolve each argument (strict evaluation)
-        match trampoline(eval(expr, current_env)) {
-            EvalOk(value, new_env) => {
+        match trampoline(eval(expr, env)) {
+            EvalOk(value, _) => {
+                // Ignore the returned env - use original env for all args
                 values = Cons(value, values)
-                current_env = new_env
             }
             EvalErr(msg, loc) => { return EvalErr(msg, loc) }
             TailCall(_, _, _) => { return EvalErr("Internal error: trampoline returned TailCall", None) }
         }
     }
-    return EvalOk(LispList(std.list.reverse(values), None), current_env)
+    return EvalOk(LispList(std.list.reverse(values), None), env)
 }
 
 effect fn apply(func: LispValue, args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
     match func {
         LispLambda(params, body, closure_env) => {
-            // Create call environment by extending closure_env with the caller's env as fallback
-            // This allows recursive functions to find themselves in the caller's environment
-            // First merge: closure_env for lexical scope, env for dynamic lookups (like self-reference)
-            let base_env: Env = Env {
-                bindings: closure_env.bindings,
-                parent: Some(env)
-            }
-            let call_env: Env = env_extend(base_env)
+            // Proper lexical scoping: extend the closure environment
+            // Anonymous lambdas don't need self-reference
+            let call_env: Env = env_extend(closure_env)
             match env_define_all(call_env, params, args) {
                 Ok(bound_env) => {
                     // Return a TailCall to be handled by the trampoline
                     // This is the key to TCO - we don't recursively call eval here
+                    return TailCall(body, Nil, bound_env)
+                }
+                Err(msg) => { return EvalErr(msg, loc) }
+            }
+        }
+        LispRecursiveLambda(name, params, body, closure_env) => {
+            // For named recursive functions: inject self-reference into closure
+            // This allows the function to call itself by name
+            let closure_with_self: Env = env_define(closure_env, name, func)
+            let call_env: Env = env_extend(closure_with_self)
+            match env_define_all(call_env, params, args) {
+                Ok(bound_env) => {
                     return TailCall(body, Nil, bound_env)
                 }
                 Err(msg) => { return EvalErr(msg, loc) }
