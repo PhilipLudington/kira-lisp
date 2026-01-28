@@ -114,6 +114,20 @@ test_builtin_framework() {
     fi
 }
 
+# Test: Standard library
+test_stdlib() {
+    local output
+    output=$(timeout 60 kira run src/main.ki run examples/testing/test-stdlib.lisp 2>&1)
+    if [[ "$output" == *"All tests passed!"* ]]; then
+        PASSED=$((PASSED + 1))
+        echo "PASS: stdlib"
+    else
+        FAILED=$((FAILED + 1))
+        FAILURES+=("stdlib: standard library tests did not pass")
+        echo "FAIL: stdlib"
+    fi
+}
+
 echo "Running tests..."
 echo
 
@@ -124,6 +138,7 @@ test_lambda
 test_compile
 test_tco
 test_builtin_framework
+test_stdlib
 
 TOTAL=$((PASSED + FAILED))
 

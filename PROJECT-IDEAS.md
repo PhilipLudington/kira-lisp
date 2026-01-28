@@ -8,14 +8,16 @@ A collection of projects that could be built with or for kira-lisp.
 
 Projects that extend kira-lisp directly or serve as examples.
 
-### Standard Library
+### Standard Library ✓
 **Location:** `src/stdlib.lisp`
+**Status:** Implemented
 
 Core functions implemented in Lisp itself:
-- List operations: `map`, `filter`, `reduce`, `fold`, `take`, `drop`
-- String operations: `split`, `join`, `trim`, `format`
-- Math utilities: `abs`, `min`, `max`, `clamp`, `sum`, `product`
-- Predicates: `every?`, `some?`, `none?`
+- ✓ List operations: `map`, `filter`, `reduce`, `foldl`, `foldr`, `take`, `drop`, `append`, `reverse`, `nth`, `last`, `flatten`, `zip`, `range`
+- ✓ Predicates: `every?`, `some?`, `none?`, `find`, `member?`
+- ✓ Math utilities: `sum`, `product`, `clamp` (note: `abs`, `min`, `max` are builtins)
+- ✓ Higher-order: `compose`, `identity`, `constantly`
+- Future: String operations (`split`, `join`, `trim`, `format`) - requires string primitives
 
 ### Test Suite ✓
 **Location:** `examples/testing/`
