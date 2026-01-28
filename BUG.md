@@ -4,138 +4,123 @@ Bugs encountered in the Kira language while developing the Lisp interpreter.
 
 ---
 
-## [x] Bug 1: `for` loop on empty `List[RecursiveType]` crashes
+## [ ] Bug 1: Imported recursive functions fail after builtin+lambda call sequence
 
-**Status:** Fixed
+**Status:** Open (workaround in place)
 
-**Description:** When using a `for` loop to iterate over an empty list where the element type is a recursive sum type (like `LispValue` or `IRExpr`), Kira throws a `TypeMismatch` runtime error.
+**Description:** When a recursive function is imported from a module, calling it with a builtin function (like `+`) followed by calling it with an inline lambda causes the second call to fail with "cdr: requires non-empty list" error, even though the list is not empty.
 
 **Steps to reproduce:**
-1. Define a recursive sum type: `type LispValue = | LispNil | LispList(List[LispValue])`
-2. Create an empty list: `let items: List[LispValue] = Nil`
-3. Iterate over it: `for item in items { ... }`
+1. Define a recursive function in a module (e.g., `foldl` in stdlib.lisp)
+2. Import the module
+3. Call the function with a builtin: `(foldl + 0 '(1 2 3))` - works
+4. Call the function with an inline lambda: `(foldl (lambda (acc x) (cons x acc)) '() '(1 2 3))` - fails
 
-**Expected:** The loop body should not execute (empty list).
-
-**Actual:** Runtime error: `error.TypeMismatch`
-
-**Workaround:** Always check for `Nil` before using `for` loops:
-```kira
-match list {
-    Nil => { /* handle empty */ }
-    _ => { for item in list { ... } }
-}
+```lisp
+(import "src/stdlib.lisp")
+(foldl + 0 '(1 2 3))           ; returns 6 - OK
+(foldl (lambda (acc x) (cons x acc)) '() '(1 2 3))  ; ERROR: cdr: requires non-empty list
 ```
+
+**Expected:** Both calls should succeed.
+
+**Actual:** Second call fails with error pointing to the recursive call site in the imported function.
+
+**Workaround:**
+1. Define lambdas as named functions before use
+2. Call functions with lambdas before calling with builtins
+3. Use explicit recursion instead of higher-order functions with inline lambdas
+
+```lisp
+; Workaround 1: Named function
+(define cons-to-front (lambda (acc x) (cons x acc)))
+(foldl cons-to-front '() '(1 2 3))  ; works
+
+; Workaround 2: Lambda first
+(foldl (lambda (acc x) (cons x acc)) '() '(1 2 3))  ; works if called first
+(foldl + 0 '(1 2 3))                                 ; works after
+```
+
+**Affected code:** `src/stdlib.lisp` - several functions use explicit recursion instead of fold+lambda to avoid this bug.
+
+**Likely cause:** Environment or closure handling issue in the Kira interpreter when module-imported functions are called with different argument types.
 
 ---
 
-## [x] Bug 2: HashMap `any` type doesn't round-trip for recursive types
+## [ ] Bug 2: Nested pattern match with sum type extraction causes TypeMismatch
 
-**Status:** Fixed
+**Status:** Open (workaround in place)
 
-**Description:** When storing a `List[LispValue]` (or other recursive sum type) in a `HashMap` and retrieving it, pattern matching on the retrieved value fails with `TypeMismatch`. The `any` type used by HashMap doesn't properly preserve type information for recursive types.
+**Description:** When pattern matching on a `List[LispValue]` with a nested sum type extraction like `Cons(LispString(s), Nil)`, Kira throws a runtime `TypeMismatch` error even when the pattern should match.
 
 **Steps to reproduce:**
-1. Store a `LispList(Cons(LispString("test"), Nil))` in a HashMap
-2. Retrieve it with `std.map.get()`
-3. Match on the result to extract the inner list
-4. Try to match on or iterate over the extracted `List[LispValue]`
-
 ```kira
-let map: HashMap = std.map.put(std.map.new(), "key", LispList(Cons(LispString("x"), Nil)))
-match std.map.get(map, "key") {
-    Some(LispList(items)) => {
-        // This match or any operation on `items` fails
-        match items {
-            Nil => { }
-            Cons(_, _) => { }  // TypeMismatch error here
+match args {
+    Cons(LispString(s), Nil) => {
+        // Use s - causes TypeMismatch at runtime
+    }
+    _ => { }
+}
+```
+
+**Expected:** Pattern matches and `s` is bound to the string value.
+
+**Actual:** Runtime error: `error.TypeMismatch`
+
+**Workaround:** Use two-level matching:
+```kira
+match args {
+    Cons(first, Nil) => {
+        match first {
+            LispString(s) => {
+                // Use s - works
+            }
+            _ => { }
         }
     }
     _ => { }
 }
 ```
 
-**Expected:** Pattern matching on the extracted list should work.
-
-**Actual:** Runtime error: `error.TypeMismatch`
-
-**Workaround:** Avoid storing `List[RecursiveType]` in HashMap, or don't retrieve and match on it. Use alternative data structures or approaches.
-
-**Impact:** This bug prevents implementing:
-- Circular import detection (storing loaded module paths)
-- Module export filtering (storing export lists)
+**Affected code:** `src/main.ki` - test framework builtins (`assert-eq`, `assert-true`, `assert-false`, `assert-throws`, `test-begin`) all use two-level matching.
 
 ---
 
-## [x] Bug 3: Pattern match extraction of `List[RecursiveType]` fails on subsequent match
+## Limitations
 
-**Status:** Fixed
+### No variadic functions
 
-**Description:** When extracting a `List[LispValue]` from a pattern match (e.g., matching `LispList(items)`), attempting to pattern match on the extracted `items` variable fails, even though it should be a valid `List[LispValue]`.
+The Lisp interpreter does not support variadic/rest parameters.
 
-**Steps to reproduce:**
-1. Parse a Lisp expression that contains a list: `(import "file.lisp" (x y))`
-2. In eval, match on the argument: `Cons(LispList(syms), Nil)`
-3. Try to match on `syms`: `match syms { Nil => ... Cons(_, _) => ... }`
-
-```kira
-effect fn eval_import(args: List[LispValue], env: Env) -> EvalResult {
-    match args {
-        Cons(LispString(path), rest) => {
-            match rest {
-                Cons(LispList(syms), Nil) => {
-                    // `syms` is extracted from pattern match
-                    match syms {
-                        Nil => { }        // Works
-                        Cons(_, _) => { } // MatchFailed error!
-                    }
-                }
-                _ => { }
-            }
-        }
-        _ => { }
-    }
-}
+```lisp
+; This syntax is NOT supported:
+(define (func . args) ...)
+(lambda args ...)
 ```
 
-**Expected:** Pattern matching on `syms` should work since it's a valid `List[LispValue]`.
+**Impact:** Functions like `constantly` cannot ignore arbitrary arguments.
 
-**Actual:** Runtime error: `error.MatchFailed`
+**Workaround:** Define functions with a fixed number of parameters (possibly ignored).
 
-**Workaround:** Avoid extracting and re-matching on `List[RecursiveType]` values. Use alternative approaches that don't require nested pattern matching on recursive types.
+### No string manipulation primitives
 
-**Impact:** This bug prevents implementing:
-- Explicit symbol lists in import: `(import "file.lisp" (sym1 sym2))`
-- Any feature requiring extraction and iteration over nested lists
+The interpreter lacks primitives for string operations beyond:
+- `string-append` - concatenate strings
+- `string-length` - get length
+- `number->string` / `string->number` - conversion
 
----
+**Missing:** `substring`, `string-ref`, `string-split`, `string-join`, `string-trim`
 
-## [x] Bug 4: `if` is a statement, not an expression
+**Impact:** Standard library cannot implement string utilities.
 
-**Status:** Workaround in place
+### Import paths relative to working directory
 
-**Description:** Kira's `if` statement doesn't return a value, making it impossible to use in expression contexts.
+The `import` function resolves paths relative to the current working directory, not relative to the importing file.
 
-**Workaround:** Use immediately-invoked function expressions (IIFE) with `match`:
-```kira
-let result: i32 = (fn() -> i32 {
-    match condition {
-        true => { return 1 }
-        false => { return 0 }
-    }
-})()
+```lisp
+; In examples/testing/test-stdlib.lisp:
+(import "src/stdlib.lisp")        ; Correct - relative to project root
+(import "../src/stdlib.lisp")     ; Wrong - would look for examples/src/stdlib.lisp
 ```
 
----
-
-## [x] Bug 5: No command-line argument support
-
-**Status:** Workaround in place
-
-**Description:** Kira doesn't have `std.env.args()` or similar functionality to access command-line arguments.
-
-**Workaround:** ~~Modify source code to switch between modes (REPL, run file, compile).~~
-
-**Fix:** Kira now supports `std.env.args()` which returns `List[string]`. The interpreter uses this for CLI mode selection.
-
----
+**Impact:** Tests must be run from the project root directory.
