@@ -714,6 +714,8 @@ effect fn eval_list(first: LispValue, rest: List[LispValue], list_loc: Option[So
             if name == "or" { return eval_or(rest, env) }
             if name == "import" { return eval_import(rest, env) }
             if name == "provide" { return eval_provide(rest, list_loc, env) }
+            if name == "try" { return eval_try(rest, list_loc, env) }
+            if name == "assert-throws" { return eval_assert_throws(rest, list_loc, env) }
             // Check if it's a macro call
             match env_lookup(env, name) {
                 Some(LispMacro(_, _, _)) => { return eval_macro_call(name, rest, env) }
@@ -1348,6 +1350,78 @@ fn eval_provide(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> Eval
     return EvalOk(LispNil, new_env)
 }
 
+// try special form: catches evaluation errors and returns (ok value) or (error "message")
+effect fn eval_try(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
+    match args {
+        Cons(expr, Nil) => {
+            match trampoline(eval(expr, env)) {
+                EvalOk(value, new_env) => {
+                    // Return (ok value)
+                    let ok_sym: LispValue = LispSymbol("ok", None)
+                    let result_list: List[LispValue] = Cons(ok_sym, Cons(value, Nil))
+                    return EvalOk(LispList(result_list, None), new_env)
+                }
+                EvalErr(msg, _) => {
+                    // Return (error "message")
+                    let error_sym: LispValue = LispSymbol("error", None)
+                    let result_list: List[LispValue] = Cons(error_sym, Cons(LispString(msg), Nil))
+                    return EvalOk(LispList(result_list, None), env)
+                }
+                TailCall(_, _, _) => {
+                    return EvalErr("Internal error: trampoline returned TailCall", None)
+                }
+            }
+        }
+        _ => {
+            return EvalErr("try: requires exactly one argument", loc)
+        }
+    }
+}
+
+// assert-throws as a special form (doesn't evaluate its first argument before checking)
+effect fn eval_assert_throws(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
+    match args {
+        Cons(expr, rest) => {
+            var desc: string = "should throw"
+            match rest {
+                Cons(first_rest, Nil) => {
+                    // Evaluate the description argument
+                    match trampoline(eval(first_rest, env)) {
+                        EvalOk(LispString(s), _) => { desc = s }
+                        EvalOk(_, _) => { return EvalErr("assert-throws: second argument must be a string description", loc) }
+                        EvalErr(msg, eloc) => { return EvalErr(msg, eloc) }
+                        TailCall(_, _, _) => { return EvalErr("Internal error", None) }
+                    }
+                }
+                Nil => { }
+                _ => { return EvalErr("assert-throws: too many arguments", loc) }
+            }
+            var new_env: Env = inc_test_count(env, "__test_count__")
+            // Try to evaluate the expression
+            match trampoline(eval(expr, env)) {
+                EvalOk(value, _) => {
+                    // Expression succeeded - this is a failure for assert-throws
+                    new_env = inc_test_count(new_env, "__fail_count__")
+                    std.io.println("  FAIL: " + desc)
+                    std.io.println("    Expected: error")
+                    std.io.println("    Actual:   " + lisp_to_string(value))
+                    return EvalOk(LispBool(false), new_env)
+                }
+                EvalErr(_, _) => {
+                    // Expression threw an error - this is what we wanted
+                    new_env = inc_test_count(new_env, "__pass_count__")
+                    std.io.println("  PASS: " + desc)
+                    return EvalOk(LispBool(true), new_env)
+                }
+                TailCall(_, _, _) => {
+                    return EvalErr("Internal error: trampoline returned TailCall", None)
+                }
+            }
+        }
+        _ => { return EvalErr("assert-throws: requires one or two arguments (expr, [description])", loc) }
+    }
+}
+
 effect fn eval_application(op_expr: LispValue, args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
     // Operator is not in tail position - fully evaluate
     match trampoline(eval(op_expr, env)) {
@@ -1453,6 +1527,15 @@ effect fn apply_builtin(name: string, args: List[LispValue], loc: Option[SourceL
     if name == "max" { return builtin_max(args, loc, env) }
     if name == "display" { return builtin_display(args, loc, env) }
     if name == "newline" { return builtin_newline(args, loc, env) }
+    // Test framework builtins
+    // Note: assert-throws is a special form (in eval_list), not a builtin
+    if name == "assert-eq" { return builtin_assert_eq(args, loc, env) }
+    if name == "assert-true" { return builtin_assert_true(args, loc, env) }
+    if name == "assert-false" { return builtin_assert_false(args, loc, env) }
+    if name == "test-begin" { return builtin_test_begin(args, loc, env) }
+    if name == "test-end" { return builtin_test_end(args, loc, env) }
+    if name == "test-summary" { return builtin_test_summary(args, loc, env) }
+    if name == "test-reset" { return builtin_test_reset(args, loc, env) }
     return EvalErr("Unknown builtin: " + name, loc)
 }
 
@@ -1472,6 +1555,160 @@ effect fn builtin_display(args: List[LispValue], loc: Option[SourceLoc], env: En
 effect fn builtin_newline(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
     std.io.println("")
     return EvalOk(LispNil, env)
+}
+
+// ============================================================================
+// Test Framework Builtins
+// ============================================================================
+
+// Helper to get test counter from environment
+fn get_test_count(env: Env, name: string) -> i64 {
+    match env_lookup(env, name) {
+        Some(LispInt(n)) => { return n }
+        _ => { return 0i64 }
+    }
+}
+
+// Helper to increment a test counter in the environment
+fn inc_test_count(env: Env, name: string) -> Env {
+    let current: i64 = get_test_count(env, name)
+    return env_define(env, name, LispInt(current + 1i64))
+}
+
+effect fn builtin_assert_eq(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
+    match args {
+        Cons(expected, Cons(actual, rest)) => {
+            var desc: string = "assertion"
+            match rest {
+                Cons(first_rest, Nil) => {
+                    match first_rest {
+                        LispString(s) => { desc = s }
+                        _ => { return EvalErr("assert-eq: third argument must be a string description", loc) }
+                    }
+                }
+                Nil => { }
+                _ => { return EvalErr("assert-eq: too many arguments", loc) }
+            }
+            var new_env: Env = inc_test_count(env, "__test_count__")
+            if values_equal(expected, actual) {
+                new_env = inc_test_count(new_env, "__pass_count__")
+                std.io.println("  PASS: " + desc)
+                return EvalOk(LispBool(true), new_env)
+            } else {
+                new_env = inc_test_count(new_env, "__fail_count__")
+                std.io.println("  FAIL: " + desc)
+                std.io.println("    Expected: " + lisp_to_string(expected))
+                std.io.println("    Actual:   " + lisp_to_string(actual))
+                return EvalOk(LispBool(false), new_env)
+            }
+        }
+        _ => { return EvalErr("assert-eq: requires two or three arguments (expected, actual, [description])", loc) }
+    }
+}
+
+effect fn builtin_assert_true(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
+    match args {
+        Cons(value, rest) => {
+            var desc: string = "assertion"
+            match rest {
+                Cons(first_rest, Nil) => {
+                    match first_rest {
+                        LispString(s) => { desc = s }
+                        _ => { return EvalErr("assert-true: second argument must be a string description", loc) }
+                    }
+                }
+                Nil => { }
+                _ => { return EvalErr("assert-true: too many arguments", loc) }
+            }
+            var new_env: Env = inc_test_count(env, "__test_count__")
+            if is_truthy(value) {
+                new_env = inc_test_count(new_env, "__pass_count__")
+                std.io.println("  PASS: " + desc)
+                return EvalOk(LispBool(true), new_env)
+            } else {
+                new_env = inc_test_count(new_env, "__fail_count__")
+                std.io.println("  FAIL: " + desc)
+                std.io.println("    Expected: #t")
+                std.io.println("    Actual:   " + lisp_to_string(value))
+                return EvalOk(LispBool(false), new_env)
+            }
+        }
+        _ => { return EvalErr("assert-true: requires one or two arguments (value, [description])", loc) }
+    }
+}
+
+effect fn builtin_assert_false(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
+    match args {
+        Cons(value, rest) => {
+            var desc: string = "assertion"
+            match rest {
+                Cons(first_rest, Nil) => {
+                    match first_rest {
+                        LispString(s) => { desc = s }
+                        _ => { return EvalErr("assert-false: second argument must be a string description", loc) }
+                    }
+                }
+                Nil => { }
+                _ => { return EvalErr("assert-false: too many arguments", loc) }
+            }
+            var new_env: Env = inc_test_count(env, "__test_count__")
+            if not is_truthy(value) {
+                new_env = inc_test_count(new_env, "__pass_count__")
+                std.io.println("  PASS: " + desc)
+                return EvalOk(LispBool(true), new_env)
+            } else {
+                new_env = inc_test_count(new_env, "__fail_count__")
+                std.io.println("  FAIL: " + desc)
+                std.io.println("    Expected: #f")
+                std.io.println("    Actual:   " + lisp_to_string(value))
+                return EvalOk(LispBool(false), new_env)
+            }
+        }
+        _ => { return EvalErr("assert-false: requires one or two arguments (value, [description])", loc) }
+    }
+}
+
+effect fn builtin_test_begin(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
+    match args {
+        Cons(first, Nil) => {
+            match first {
+                LispString(name) => {
+                    std.io.println("")
+                    std.io.println("--- " + name + " ---")
+                    return EvalOk(LispNil, env)
+                }
+                _ => { return EvalErr("test-begin: requires a string argument (test name)", loc) }
+            }
+        }
+        _ => { return EvalErr("test-begin: requires exactly one string argument", loc) }
+    }
+}
+
+effect fn builtin_test_end(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
+    return EvalOk(LispNil, env)
+}
+
+effect fn builtin_test_summary(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
+    let total: i64 = get_test_count(env, "__test_count__")
+    let passed: i64 = get_test_count(env, "__pass_count__")
+    let failed: i64 = get_test_count(env, "__fail_count__")
+    std.io.println("")
+    std.io.println("===================")
+    std.io.println("Total: " + std.string.from_i64(total) + " | Passed: " + std.string.from_i64(passed) + " | Failed: " + std.string.from_i64(failed))
+    if failed == 0i64 {
+        std.io.println("All tests passed!")
+        return EvalOk(LispBool(true), env)
+    } else {
+        std.io.println("Some tests failed.")
+        return EvalOk(LispBool(false), env)
+    }
+}
+
+effect fn builtin_test_reset(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
+    var new_env: Env = env_define(env, "__test_count__", LispInt(0i64))
+    new_env = env_define(new_env, "__pass_count__", LispInt(0i64))
+    new_env = env_define(new_env, "__fail_count__", LispInt(0i64))
+    return EvalOk(LispNil, new_env)
 }
 
 fn builtin_add(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
@@ -1864,6 +2101,15 @@ fn make_initial_env() -> Env {
     env = env_define(env, "max", LispBuiltin("max"))
     env = env_define(env, "display", LispBuiltin("display"))
     env = env_define(env, "newline", LispBuiltin("newline"))
+    // Test framework builtins
+    // Note: assert-throws is a special form (in eval_list), not a builtin
+    env = env_define(env, "assert-eq", LispBuiltin("assert-eq"))
+    env = env_define(env, "assert-true", LispBuiltin("assert-true"))
+    env = env_define(env, "assert-false", LispBuiltin("assert-false"))
+    env = env_define(env, "test-begin", LispBuiltin("test-begin"))
+    env = env_define(env, "test-end", LispBuiltin("test-end"))
+    env = env_define(env, "test-summary", LispBuiltin("test-summary"))
+    env = env_define(env, "test-reset", LispBuiltin("test-reset"))
     return env
 }
 

@@ -100,6 +100,20 @@ test_tco() {
     fi
 }
 
+# Test: Built-in test framework
+test_builtin_framework() {
+    local output
+    output=$(kira run src/main.ki run examples/testing/test-example.lisp 2>&1)
+    if [[ "$output" == *"All tests passed!"* ]]; then
+        PASSED=$((PASSED + 1))
+        echo "PASS: builtin-framework"
+    else
+        FAILED=$((FAILED + 1))
+        FAILURES+=("builtin-framework: test suite did not pass all tests")
+        echo "FAIL: builtin-framework"
+    fi
+}
+
 echo "Running tests..."
 echo
 
@@ -109,6 +123,7 @@ test_lists
 test_lambda
 test_compile
 test_tco
+test_builtin_framework
 
 TOTAL=$((PASSED + FAILED))
 
