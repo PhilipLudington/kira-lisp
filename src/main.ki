@@ -507,6 +507,22 @@ fn env_new() -> Env {
     return Env { bindings: std.map.new(), parent: None }
 }
 
+// Helper to reverse a list of LispValues
+fn lisp_reverse(lst: List[LispValue]) -> List[LispValue] {
+    var result: List[LispValue] = Nil
+    var current: List[LispValue] = lst
+    loop {
+        match current {
+            Nil => { break }
+            Cons(head, tail) => {
+                result = Cons(head, result)
+                current = tail
+            }
+        }
+    }
+    return result
+}
+
 fn env_extend(parent: Env) -> Env {
     return Env { bindings: std.map.new(), parent: Some(parent) }
 }
@@ -1552,6 +1568,14 @@ effect fn apply_builtin(name: string, args: List[LispValue], loc: Option[SourceL
     if name == "string-length" { return builtin_string_length(args, loc, env) }
     if name == "number->string" { return builtin_num_to_str(args, loc, env) }
     if name == "string->number" { return builtin_str_to_num(args, loc, env) }
+    if name == "string-ref" { return builtin_string_ref(args, loc, env) }
+    if name == "substring" { return builtin_substring(args, loc, env) }
+    if name == "string->list" { return builtin_string_to_list(args, loc, env) }
+    if name == "list->string" { return builtin_list_to_string(args, loc, env) }
+    if name == "char->integer" { return builtin_char_to_integer(args, loc, env) }
+    if name == "integer->char" { return builtin_integer_to_char(args, loc, env) }
+    if name == "string-split" { return builtin_string_split(args, loc, env) }
+    if name == "string-join" { return builtin_string_join(args, loc, env) }
     if name == "abs" { return builtin_abs(args, loc, env) }
     if name == "min" { return builtin_min(args, loc, env) }
     if name == "max" { return builtin_max(args, loc, env) }
@@ -2069,6 +2093,215 @@ fn builtin_str_to_num(args: List[LispValue], loc: Option[SourceLoc], env: Env) -
     }
 }
 
+fn builtin_string_ref(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
+    match args {
+        Cons(LispString(s), Cons(LispInt(idx), Nil)) => {
+            if idx < 0i64 {
+                return EvalOk(LispBool(false), env)
+            }
+            let idx_i32: i32 = idx
+            match std.string.char_at(s, idx_i32) {
+                Some(c) => {
+                    var sb: StringBuilder = std.builder.new()
+                    sb = std.builder.append_char(sb, c)
+                    return EvalOk(LispString(std.builder.build(sb)), env)
+                }
+                None => { return EvalOk(LispBool(false), env) }
+            }
+        }
+        _ => { return EvalErr("string-ref: requires a string and an integer index", loc) }
+    }
+}
+
+fn builtin_substring(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
+    match args {
+        Cons(LispString(s), Cons(LispInt(start), Cons(LispInt(end), Nil))) => {
+            if start < 0i64 {
+                return EvalOk(LispBool(false), env)
+            }
+            let len: i32 = std.string.length(s)
+            let start_i32: i32 = start
+            var end_i32: i32 = end
+            if start_i32 > len {
+                return EvalOk(LispBool(false), env)
+            }
+            if end_i32 > len {
+                end_i32 = len
+            }
+            if start_i32 > end_i32 {
+                return EvalOk(LispBool(false), env)
+            }
+            match std.string.substring(s, start_i32, end_i32) {
+                Some(sub) => { return EvalOk(LispString(sub), env) }
+                None => { return EvalOk(LispBool(false), env) }
+            }
+        }
+        _ => { return EvalErr("substring: requires a string and two integer indices", loc) }
+    }
+}
+
+fn builtin_string_to_list(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
+    match args {
+        Cons(LispString(s), Nil) => {
+            var result: List[LispValue] = Nil
+            for c in std.string.chars(s) {
+                var sb: StringBuilder = std.builder.new()
+                sb = std.builder.append_char(sb, c)
+                result = Cons(LispString(std.builder.build(sb)), result)
+            }
+            return EvalOk(LispList(lisp_reverse(result), None), env)
+        }
+        _ => { return EvalErr("string->list: requires a string", loc) }
+    }
+}
+
+fn builtin_list_to_string(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
+    match args {
+        Cons(lst, Nil) => {
+            var sb: StringBuilder = std.builder.new()
+            var current: LispValue = lst
+            loop {
+                match current {
+                    LispList(Nil, _) => { break }
+                    LispList(Cons(LispString(s), rest), _) => {
+                        sb = std.builder.append(sb, s)
+                        current = LispList(rest, None)
+                    }
+                    LispList(Cons(_, _), _) => {
+                        return EvalErr("list->string: list must contain only strings", loc)
+                    }
+                    LispNil => { break }
+                    _ => { return EvalErr("list->string: requires a list of strings", loc) }
+                }
+            }
+            return EvalOk(LispString(std.builder.build(sb)), env)
+        }
+        _ => { return EvalErr("list->string: requires a list", loc) }
+    }
+}
+
+fn builtin_char_to_integer(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
+    match args {
+        Cons(LispString(s), Nil) => {
+            let len: i32 = std.string.length(s)
+            if len != 1i32 {
+                return EvalOk(LispBool(false), env)
+            }
+            match std.string.char_at(s, 0i32) {
+                Some(c) => { return EvalOk(LispInt(std.char.to_i32(c)), env) }
+                None => { return EvalOk(LispBool(false), env) }
+            }
+        }
+        _ => { return EvalErr("char->integer: requires a single-character string", loc) }
+    }
+}
+
+fn builtin_integer_to_char(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
+    match args {
+        Cons(LispInt(n), Nil) => {
+            let n_i32: i32 = n
+            match std.char.from_i32(n_i32) {
+                Some(c) => {
+                    var sb: StringBuilder = std.builder.new()
+                    sb = std.builder.append_char(sb, c)
+                    return EvalOk(LispString(std.builder.build(sb)), env)
+                }
+                None => { return EvalOk(LispBool(false), env) }
+            }
+        }
+        _ => { return EvalErr("integer->char: requires an integer", loc) }
+    }
+}
+
+fn builtin_string_split(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
+    match args {
+        Cons(LispString(s), Cons(LispString(delim), Nil)) => {
+            let slen: i32 = std.string.length(s)
+            let dlen: i32 = std.string.length(delim)
+
+            if slen == 0i32 {
+                return EvalOk(LispList(Cons(LispString(""), Nil), None), env)
+            }
+
+            // Empty delimiter: split into individual characters
+            if dlen == 0i32 {
+                var result: List[LispValue] = Nil
+                for c in std.string.chars(s) {
+                    var sb: StringBuilder = std.builder.new()
+                    sb = std.builder.append_char(sb, c)
+                    result = Cons(LispString(std.builder.build(sb)), result)
+                }
+                return EvalOk(LispList(lisp_reverse(result), None), env)
+            }
+
+            // Normal split
+            var result: List[LispValue] = Nil
+            var start: i32 = 0i32
+            var i: i32 = 0i32
+
+            loop {
+                if i > slen - dlen {
+                    break
+                }
+                match std.string.substring(s, i, i + dlen) {
+                    Some(sub) => {
+                        if sub == delim {
+                            match std.string.substring(s, start, i) {
+                                Some(part) => { result = Cons(LispString(part), result) }
+                                None => {}
+                            }
+                            start = i + dlen
+                            i = start
+                        } else {
+                            i = i + 1i32
+                        }
+                    }
+                    None => { i = i + 1i32 }
+                }
+            }
+
+            // Add the last part
+            match std.string.substring(s, start, slen) {
+                Some(part) => { result = Cons(LispString(part), result) }
+                None => {}
+            }
+
+            return EvalOk(LispList(lisp_reverse(result), None), env)
+        }
+        _ => { return EvalErr("string-split: requires two strings", loc) }
+    }
+}
+
+fn builtin_string_join(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
+    match args {
+        Cons(lst, Cons(LispString(delim), Nil)) => {
+            var sb: StringBuilder = std.builder.new()
+            var current: LispValue = lst
+            var first: bool = true
+            loop {
+                match current {
+                    LispList(Nil, _) => { break }
+                    LispList(Cons(LispString(s), rest), _) => {
+                        if not first {
+                            sb = std.builder.append(sb, delim)
+                        }
+                        sb = std.builder.append(sb, s)
+                        first = false
+                        current = LispList(rest, None)
+                    }
+                    LispList(Cons(_, _), _) => {
+                        return EvalErr("string-join: list must contain only strings", loc)
+                    }
+                    LispNil => { break }
+                    _ => { return EvalErr("string-join: requires a list of strings", loc) }
+                }
+            }
+            return EvalOk(LispString(std.builder.build(sb)), env)
+        }
+        _ => { return EvalErr("string-join: requires a list and a delimiter string", loc) }
+    }
+}
+
 fn builtin_abs(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
     match args {
         Cons(LispInt(n), Nil) => { if n < 0i64 { return EvalOk(LispInt(0i64 - n), env) } else { return EvalOk(LispInt(n), env) } }
@@ -2126,6 +2359,14 @@ fn make_initial_env() -> Env {
     env = env_define(env, "string-length", LispBuiltin("string-length"))
     env = env_define(env, "number->string", LispBuiltin("number->string"))
     env = env_define(env, "string->number", LispBuiltin("string->number"))
+    env = env_define(env, "string-ref", LispBuiltin("string-ref"))
+    env = env_define(env, "substring", LispBuiltin("substring"))
+    env = env_define(env, "string->list", LispBuiltin("string->list"))
+    env = env_define(env, "list->string", LispBuiltin("list->string"))
+    env = env_define(env, "char->integer", LispBuiltin("char->integer"))
+    env = env_define(env, "integer->char", LispBuiltin("integer->char"))
+    env = env_define(env, "string-split", LispBuiltin("string-split"))
+    env = env_define(env, "string-join", LispBuiltin("string-join"))
     env = env_define(env, "abs", LispBuiltin("abs"))
     env = env_define(env, "min", LispBuiltin("min"))
     env = env_define(env, "max", LispBuiltin("max"))
@@ -2185,6 +2426,10 @@ fn is_builtin_name(name: string) -> bool {
            name == "eq?" or name == "equal?" or name == "not" or
            name == "string-append" or name == "string-length" or
            name == "number->string" or name == "string->number" or
+           name == "string-ref" or name == "substring" or
+           name == "string->list" or name == "list->string" or
+           name == "char->integer" or name == "integer->char" or
+           name == "string-split" or name == "string-join" or
            name == "abs" or name == "min" or name == "max" or
            name == "display" or name == "newline"
 }
