@@ -40,15 +40,16 @@ Simple interactive games demonstrating I/O and state:
 - Tic-tac-toe
 - Hangman
 
-### Data Structures
+### Data Structures ✓
 **Location:** `examples/data-structures/`
+**Status:** Implemented
 
 Pure functional data structures:
-- Hash maps (using association lists or tries)
-- Sets
-- Binary search trees
-- Priority queues / heaps
-- Persistent vectors
+- ✓ Association list maps (`alist.lisp`) - key-value storage with `equal?` comparison
+- ✓ Sets (`set.lisp`) - unique elements in sorted lists, numeric comparison
+- ✓ Binary search trees (`bst.lisp`) - ordered maps with numeric keys
+- ✓ Leftist heaps (`heap.lisp`) - priority queues with efficient merge, includes `heapsort`
+- Deferred: Persistent vectors (too complex for pure list-based implementation)
 
 ---
 
