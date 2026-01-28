@@ -335,12 +335,12 @@ Server entry point:
 - [x] 1.7 `string-split`
 - [x] 1.8 `string-join`
 
-### Phase 2: JSON Library
-- [ ] 2.1 JSON representation
-- [ ] 2.2 JSON lexer
-- [ ] 2.3 JSON parser
-- [ ] 2.4 JSON serializer
-- [ ] 2.5 JSON tests
+### Phase 2: JSON Library ✓
+- [x] 2.1 JSON representation
+- [x] 2.2 JSON lexer
+- [x] 2.3 JSON parser
+- [x] 2.4 JSON serializer
+- [x] 2.5 JSON tests
 
 ### Phase 3: LSP Server
 - [ ] 3.1 JSON-RPC framing
