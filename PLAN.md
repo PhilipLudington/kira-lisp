@@ -192,12 +192,12 @@ Test cases:
 ---
 
 ## Phase 3: LSP Server
-**Repo:** `kira-lisp-lsp` (separate repo)
+**Repo:** `kira-lisp` (this repo, in `src/lsp/`)
 
 Implement Language Server Protocol for Kira Lisp.
 
 ### Task 3.1: JSON-RPC Message Framing
-**File:** `src/rpc.lisp`
+**File:** `src/lsp/rpc.lisp`
 
 Handle LSP transport:
 - Read `Content-Length: N\r\n\r\n` header
@@ -214,7 +214,7 @@ Handle LSP transport:
 ```
 
 ### Task 3.2: LSP Protocol Types
-**File:** `src/protocol.lisp`
+**File:** `src/lsp/protocol.lisp`
 
 Define message constructors/accessors:
 ```lisp
@@ -227,7 +227,7 @@ Define message constructors/accessors:
 ```
 
 ### Task 3.3: Initialize/Shutdown Handlers
-**File:** `src/handlers.lisp`
+**File:** `src/lsp/handlers.lisp`
 
 Implement lifecycle:
 - `initialize` - Return server capabilities
@@ -236,7 +236,7 @@ Implement lifecycle:
 - `exit` - Terminate process
 
 ### Task 3.4: Document Sync
-**File:** `src/documents.lisp`
+**File:** `src/lsp/documents.lisp`
 
 Track open documents:
 - `textDocument/didOpen` - Store document content
@@ -246,7 +246,7 @@ Track open documents:
 Store as alist: `((uri . content) ...)`
 
 ### Task 3.5: Diagnostics
-**File:** `src/diagnostics.lisp`
+**File:** `src/lsp/diagnostics.lisp`
 
 Report parse/eval errors:
 - Re-parse document on change
@@ -262,7 +262,7 @@ Report parse/eval errors:
 ```
 
 ### Task 3.6: Hover Support
-**File:** `src/hover.lisp`
+**File:** `src/lsp/hover.lisp`
 
 Show info on hover:
 - Find symbol at position
@@ -270,7 +270,7 @@ Show info on hover:
 - Return documentation string
 
 ### Task 3.7: Go to Definition
-**File:** `src/definition.lisp`
+**File:** `src/lsp/definition.lisp`
 
 Jump to symbol definition:
 - Track where symbols are defined (file, line, column)
@@ -278,7 +278,7 @@ Jump to symbol definition:
 - Return location or null
 
 ### Task 3.8: LSP Main Loop
-**File:** `src/main.lisp`
+**File:** `src/lsp/main.lisp`
 
 Server entry point:
 ```lisp
@@ -342,15 +342,15 @@ Server entry point:
 - [x] 2.4 JSON serializer
 - [x] 2.5 JSON tests
 
-### Phase 3: LSP Server
-- [ ] 3.1 JSON-RPC framing
-- [ ] 3.2 Protocol types
-- [ ] 3.3 Lifecycle handlers
-- [ ] 3.4 Document sync
+### Phase 3: LSP Server (In Progress)
+- [x] 3.1 JSON-RPC framing
+- [x] 3.2 Protocol types
+- [x] 3.3 Lifecycle handlers
+- [x] 3.4 Document sync
 - [ ] 3.5 Diagnostics
 - [ ] 3.6 Hover
 - [ ] 3.7 Go to definition
-- [ ] 3.8 LSP main loop
+- [x] 3.8 LSP main loop
 
 ---
 
@@ -369,3 +369,14 @@ Available in `std.string`:
 - [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/)
 - Transport: stdin/stdout with `Content-Length` headers
 - Message format: JSON-RPC 2.0
+
+### Running the LSP Server
+```bash
+kira run src/main.ki run src/lsp/server.lisp
+```
+
+### LSP Implementation Notes
+- Uses line-based I/O (`read-line`) since Kira lacks `read-bytes`
+- Each JSON message body must be on its own line (followed by newline)
+- Server capabilities: textDocumentSync (full), hoverProvider, definitionProvider
+- Added `read-line` primitive to interpreter for stdin reading

@@ -1581,6 +1581,7 @@ effect fn apply_builtin(name: string, args: List[LispValue], loc: Option[SourceL
     if name == "max" { return builtin_max(args, loc, env) }
     if name == "display" { return builtin_display(args, loc, env) }
     if name == "newline" { return builtin_newline(args, loc, env) }
+    if name == "read-line" { return builtin_read_line(args, loc, env) }
     // Test framework builtins
     // Note: assert-throws is a special form (in eval_list), not a builtin
     if name == "assert-eq" { return builtin_assert_eq(args, loc, env) }
@@ -1609,6 +1610,18 @@ effect fn builtin_display(args: List[LispValue], loc: Option[SourceLoc], env: En
 effect fn builtin_newline(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
     std.io.println("")
     return EvalOk(LispNil, env)
+}
+
+effect fn builtin_read_line(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
+    match args {
+        Nil => {
+            match std.io.read_line() {
+                Ok(line) => { return EvalOk(LispString(line), env) }
+                Err(_) => { return EvalOk(LispBool(false), env) }
+            }
+        }
+        _ => { return EvalErr("read-line: takes no arguments", loc) }
+    }
 }
 
 // ============================================================================
@@ -2372,6 +2385,7 @@ fn make_initial_env() -> Env {
     env = env_define(env, "max", LispBuiltin("max"))
     env = env_define(env, "display", LispBuiltin("display"))
     env = env_define(env, "newline", LispBuiltin("newline"))
+    env = env_define(env, "read-line", LispBuiltin("read-line"))
     // Test framework builtins
     // Note: assert-throws is a special form (in eval_list), not a builtin
     env = env_define(env, "assert-eq", LispBuiltin("assert-eq"))

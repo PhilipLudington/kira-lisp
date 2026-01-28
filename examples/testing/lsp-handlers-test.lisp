@@ -1,0 +1,55 @@
+; Test LSP handlers
+(import "src/lsp/handlers.lisp")
+
+(test-reset)
+
+(test-begin "Initial state")
+(let ((state (make-initial-state)))
+  (assert-false (state-initialized? state) "not initialized initially")
+  (assert-false (state-shutdown? state) "not shutdown initially"))
+(test-end)
+
+(test-begin "Initialize handler")
+(let ((state (make-initial-state)))
+  (let ((result (handle-initialize state '())))
+    (let ((new-state (car result))
+          (response (car (cdr result))))
+      (assert-true (state-initialized? new-state) "state is initialized after")
+      ; Check response has capabilities
+      (assert-true (not (null? (json-get response "capabilities"))) "response has capabilities"))))
+(test-end)
+
+(test-begin "Shutdown handler")
+(let ((state (state-set (make-initial-state) "initialized" #t)))
+  (let ((result (handle-shutdown state '())))
+    (let ((new-state (car result))
+          (response (car (cdr result))))
+      (assert-true (state-shutdown? new-state) "state is shutdown after")
+      (assert-eq 'null response "shutdown returns null"))))
+(test-end)
+
+(test-begin "Request dispatcher - initialize")
+(let ((state (make-initial-state)))
+  (let ((result (dispatch-request state "initialize" '() 1)))
+    (let ((new-state (car result))
+          (response (car (cdr result))))
+      (assert-true (state-initialized? new-state) "initialized after dispatch")
+      (assert-eq 1 (json-get response "id") "response has correct id")
+      (assert-true (not (json-null? (json-get response "result"))) "response has result"))))
+(test-end)
+
+(test-begin "Request dispatcher - error before initialize")
+(let ((state (make-initial-state)))
+  (let ((result (dispatch-request state "shutdown" '() 1)))
+    (let ((response (car (cdr result))))
+      (assert-true (not (json-null? (json-get response "error"))) "returns error")
+      (assert-eq -32002 (json-get-in response '("error" "code")) "server not initialized error"))))
+(test-end)
+
+(test-begin "Notification dispatcher - exit")
+(let ((state (state-set (make-initial-state) "initialized" #t)))
+  (let ((new-state (dispatch-notification state "exit" '())))
+    (assert-eq #t (state-get new-state "exit") "exit flag set")))
+(test-end)
+
+(test-summary)
