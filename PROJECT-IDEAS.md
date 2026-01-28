@@ -17,14 +17,17 @@ Core functions implemented in Lisp itself:
 - Math utilities: `abs`, `min`, `max`, `clamp`, `sum`, `product`
 - Predicates: `every?`, `some?`, `none?`
 
-### Test Suite
+### Test Suite ✓
 **Location:** `examples/testing/`
+**Status:** Implemented
 
-A property-based testing framework:
-- Assertion macros: `assert-eq`, `assert-true`, `assert-throws`
-- Test grouping and reporting
-- Randomized input generation
-- Shrinking for minimal failing cases
+Built-in testing framework with interpreter primitives:
+- ✓ `assert-eq`, `assert-true`, `assert-false`, `assert-throws`
+- ✓ Test grouping: `test-begin`, `test-end`
+- ✓ Test reporting: `test-summary`, `test-reset`
+- ✓ `try` special form for error handling
+- Future: Randomized input generation
+- Future: Shrinking for minimal failing cases
 
 ### Mini Games
 **Location:** `examples/games/`
