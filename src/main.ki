@@ -1062,6 +1062,16 @@ effect fn eval_begin(args: List[LispValue], env: Env) -> EvalResult {
     return eval_begin_list(args, env)
 }
 
+// Check if an expression is a binding form that modifies the environment
+fn is_binding_form(expr: LispValue) -> bool {
+    match expr {
+        LispList(Cons(LispSymbol(name, _), _), _) => {
+            return name == "define" or name == "set!" or name == "defmacro" or name == "import"
+        }
+        _ => { return false }
+    }
+}
+
 // Evaluate a sequence of expressions, with the last one in tail position
 effect fn eval_begin_list(exprs: List[LispValue], env: Env) -> EvalResult {
     match exprs {
@@ -1074,8 +1084,14 @@ effect fn eval_begin_list(exprs: List[LispValue], env: Env) -> EvalResult {
             // Not the last - fully evaluate it
             match trampoline(eval(first_expr, env)) {
                 EvalOk(_, new_env) => {
-                    // Continue with rest, last one will be in tail position
-                    return eval_begin_list(rest, new_env)
+                    // Only use new_env for binding forms (define, set!, defmacro)
+                    // For all other expressions (esp. function calls), use original env
+                    // This prevents callee's environment from polluting the caller's scope
+                    if is_binding_form(first_expr) {
+                        return eval_begin_list(rest, new_env)
+                    } else {
+                        return eval_begin_list(rest, env)
+                    }
                 }
                 EvalErr(msg, loc) => { return EvalErr(msg, loc) }
                 TailCall(_, _, _) => { return EvalErr("Internal error: trampoline returned TailCall", None) }
@@ -1591,6 +1607,8 @@ effect fn apply_builtin(name: string, args: List[LispValue], loc: Option[SourceL
     if name == "test-end" { return builtin_test_end(args, loc, env) }
     if name == "test-summary" { return builtin_test_summary(args, loc, env) }
     if name == "test-reset" { return builtin_test_reset(args, loc, env) }
+    // LSP support builtins
+    if name == "check-syntax" { return builtin_check_syntax(args, loc, env) }
     return EvalErr("Unknown builtin: " + name, loc)
 }
 
@@ -1776,6 +1794,63 @@ effect fn builtin_test_reset(args: List[LispValue], loc: Option[SourceLoc], env:
     new_env = env_define(new_env, "__pass_count__", LispInt(0i64))
     new_env = env_define(new_env, "__fail_count__", LispInt(0i64))
     return EvalOk(LispNil, new_env)
+}
+
+// ============================================================================
+// LSP Support Builtins
+// ============================================================================
+
+// Helper to build syntax error result
+fn make_syntax_error_result(err_msg: string, err_loc_opt: Option[SourceLoc], env: Env) -> EvalResult {
+    match err_loc_opt {
+        Some(err_loc) => {
+            // Use implicit i32 -> i64 widening
+            let line_i64: i64 = err_loc.line
+            let col_i64: i64 = err_loc.column
+            let line_val: LispValue = LispInt(line_i64)
+            let col_val: LispValue = LispInt(col_i64)
+            let msg_val: LispValue = LispString(err_msg)
+            let err_entry: LispValue = LispList(Cons(line_val, Cons(col_val, Cons(msg_val, Nil))), None)
+            return EvalOk(LispList(Cons(err_entry, Nil), None), env)
+        }
+        None => {
+            let line_val: LispValue = LispInt(1i64)
+            let col_val: LispValue = LispInt(1i64)
+            let msg_val: LispValue = LispString(err_msg)
+            let err_entry: LispValue = LispList(Cons(line_val, Cons(col_val, Cons(msg_val, Nil))), None)
+            return EvalOk(LispList(Cons(err_entry, Nil), None), env)
+        }
+    }
+}
+
+// check-syntax: Parse Lisp code and return syntax errors
+// (check-syntax code-string) => () if valid, or ((line col message) ...) if errors
+effect fn builtin_check_syntax(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
+    match args {
+        Cons(LispString(code), Nil) => {
+            // Lex the code
+            match tokenize(code, "<check>") {
+                LexErr(lex_msg, err_loc) => {
+                    // Return list with one error: ((line col message))
+                    return make_syntax_error_result(lex_msg, Some(err_loc), env)
+                }
+                LexOk(tokens) => {
+                    // Parse all expressions
+                    match parse_all(tokens) {
+                        ParseAllErr(parse_msg, err_loc_opt) => {
+                            // Return list with one error
+                            return make_syntax_error_result(parse_msg, err_loc_opt, env)
+                        }
+                        ParseAllOk(_) => {
+                            // No errors - return empty list
+                            return EvalOk(LispNil, env)
+                        }
+                    }
+                }
+            }
+        }
+        _ => { return EvalErr("check-syntax: requires one string argument", loc) }
+    }
 }
 
 fn builtin_add(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
@@ -2395,6 +2470,8 @@ fn make_initial_env() -> Env {
     env = env_define(env, "test-end", LispBuiltin("test-end"))
     env = env_define(env, "test-summary", LispBuiltin("test-summary"))
     env = env_define(env, "test-reset", LispBuiltin("test-reset"))
+    // LSP support builtins
+    env = env_define(env, "check-syntax", LispBuiltin("check-syntax"))
     return env
 }
 
