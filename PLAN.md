@@ -347,10 +347,17 @@ Server entry point:
 - [x] 3.2 Protocol types
 - [x] 3.3 Lifecycle handlers
 - [x] 3.4 Document sync
-- [ ] 3.5 Diagnostics
+- [~] 3.5 Diagnostics (blocked - see notes)
 - [ ] 3.6 Hover
 - [ ] 3.7 Go to definition
 - [x] 3.8 LSP main loop
+
+**Note on 3.5 Diagnostics:**
+- `check-syntax` builtin implemented in `src/main.ki` - works correctly
+- `src/lsp/diagnostics.lisp` created with diagnostic generation logic
+- Integration blocked by interpreter bug: function parameters become
+  unavailable after any function call in a sequence (similar to Bug 1
+  in BUG.md but affects all functions, not just recursive ones)
 
 ---
 

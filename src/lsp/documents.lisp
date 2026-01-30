@@ -3,7 +3,7 @@
 ;
 ; Handles:
 ;   textDocument/didOpen   - Store document content
-;   textDocument/didChange - Update content (full sync mode)
+;   textDocument/didChange - Update content
 ;   textDocument/didClose  - Remove from tracking
 ;
 ; Documents are stored in state as: ("documents" . ((uri . content) ...))
