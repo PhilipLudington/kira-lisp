@@ -7,6 +7,10 @@
 ;   textDocument/didClose  - Remove from tracking
 ;
 ; Documents are stored in state as: ("documents" . ((uri . content) ...))
+;
+; Document handlers return: (new-state uri content action)
+; where action is 'open, 'change, 'close, or #f for invalid
+; The caller (main.lisp) uses uri/content to generate diagnostics
 
 (import "src/lsp/protocol.lisp")
 (import "src/lsp/handlers.lisp")
@@ -14,7 +18,7 @@
 (provide
   handle-did-open handle-did-change handle-did-close
   get-document set-document remove-document document-exists?
-  add-document-handlers dispatch-document-notification)
+  dispatch-document-notification)
 
 ; ============================================================================
 ; Helper Functions (defined first for proper ordering)
@@ -76,51 +80,58 @@
 ; textDocument/didOpen
 ; ============================================================================
 ; Notification params: {textDocument: {uri, languageId, version, text}}
+; Returns: (new-state uri content 'open) or (state #f #f #f) for invalid
 
 (define (handle-did-open state params)
   (let ((text-doc (json-get params "textDocument")))
     (let ((uri (json-get text-doc "uri"))
           (text (json-get text-doc "text")))
       (if (or (json-null? uri) (json-null? text))
-          state  ; Invalid params, ignore
-          (set-document state uri text)))))
+          (list state #f #f #f)  ; Invalid params
+          (let ((new-state (set-document state uri text)))
+            (list new-state uri text 'open))))))
 
 ; ============================================================================
 ; textDocument/didChange
 ; ============================================================================
 ; Notification params: {textDocument: {uri, version}, contentChanges: [{text}]}
 ; We use full sync mode, so contentChanges has single element with full text
+; Returns: (new-state uri content 'change) or (state #f #f #f) for invalid
 
 (define (handle-did-change state params)
   (let ((text-doc (json-get params "textDocument"))
         (changes (json-get params "contentChanges")))
     (let ((uri (json-get text-doc "uri")))
       (if (json-null? uri)
-          state
+          (list state #f #f #f)
           ; Get new content from first change (full sync mode)
           (if (null? changes)
-              state
+              (list state #f #f #f)
               (let ((new-text (json-get (car changes) "text")))
                 (if (json-null? new-text)
-                    state
-                    (set-document state uri new-text))))))))
+                    (list state #f #f #f)
+                    (let ((new-state (set-document state uri new-text)))
+                      (list new-state uri new-text 'change)))))))))
 
 ; ============================================================================
 ; textDocument/didClose
 ; ============================================================================
 ; Notification params: {textDocument: {uri}}
+; Returns: (new-state uri #f 'close) or (state #f #f #f) for invalid
 
 (define (handle-did-close state params)
   (let ((text-doc (json-get params "textDocument")))
     (let ((uri (json-get text-doc "uri")))
       (if (json-null? uri)
-          state
-          (remove-document state uri)))))
+          (list state #f #f #f)
+          (let ((new-state (remove-document state uri)))
+            (list new-state uri #f 'close))))))
 
 ; ============================================================================
 ; Integration with Dispatcher
 ; ============================================================================
 ; This function extends the notification dispatcher with document handlers
+; Returns: (new-state uri content action) or #f if not a document notification
 
 (define (dispatch-document-notification state method params)
   (if (equal? method "textDocument/didOpen")
@@ -130,11 +141,3 @@
           (if (equal? method "textDocument/didClose")
               (handle-did-close state params)
               #f))))  ; Not a document notification
-
-; Extend the dispatch-notification function with document handlers
-; Returns: new-state or #f if not handled
-(define (add-document-handlers original-dispatch state method params)
-  (let ((doc-result (dispatch-document-notification state method params)))
-    (if doc-result
-        doc-result
-        (original-dispatch state method params))))
