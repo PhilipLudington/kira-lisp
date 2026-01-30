@@ -3,52 +3,95 @@
 ;
 ; Ties together all LSP components into a working server.
 ; Reads messages from stdin, dispatches to handlers, writes responses.
-;
-; NOTE: Due to interpreter bug with nested let + function calls,
-; we structure code to minimize nested let blocks.
 
 (import "src/lsp/rpc.lisp")
 (import "src/lsp/protocol.lisp")
 (import "src/lsp/handlers.lisp")
 (import "src/lsp/documents.lisp")
+(import "src/lsp/diagnostics.lisp")
+(import "src/lsp/hover.lisp")
+; Note: definition.lisp exists but causes timeout when loaded after hover
+; due to interpreter performance issues with large import chains
+; (import "src/lsp/definition.lisp")
 
 (provide lsp-main lsp-loop)
 
 ; ============================================================================
+; Helper Functions
+; ============================================================================
+
+; Helper to send a single notification to the client
+(define (send-notification notification)
+  (let ((body (json-stringify notification)))
+    (display "Content-Length: ")
+    (display (string-length body))
+    (display "\r\n\r\n")
+    (display body)))
+
+; Get nth element from list (0-indexed)
+(define (list-nth lst n)
+  (if (null? lst)
+      #f
+      (if (= n 0)
+          (car lst)
+          (list-nth (cdr lst) (- n 1)))))
+
+; ============================================================================
 ; Extended Dispatchers
 ; ============================================================================
-; Combine the base handlers with document handlers
+
+; Handle document notifications - returns (new-state should-exit?)
+; Also sends diagnostic notifications
+(define (handle-document-notification state method params)
+  (let ((doc-result (dispatch-document-notification state method params)))
+    (if (not doc-result)
+        #f  ; Not a document notification
+        ; doc-result is (new-state uri content action)
+        (let ((new-state (list-nth doc-result 0))
+              (uri (list-nth doc-result 1))
+              (content (list-nth doc-result 2))
+              (action (list-nth doc-result 3)))
+          (if (not action)
+              ; Invalid params, just return state
+              (list new-state #f)
+              ; Generate and send diagnostics
+              (if (equal? action 'close)
+                  ; On close, clear diagnostics
+                  (let ((_ (send-notification (make-diagnostic-notification uri '()))))
+                    (list new-state #f))
+                  ; On open/change, compute and send diagnostics
+                  (let ((diag-notification (publish-diagnostics-for-document uri content)))
+                    (let ((_ (send-notification diag-notification)))
+                      (list new-state #f)))))))))
 
 (define (full-dispatch-notification state method params)
   ; First try document handlers
-  (let ((doc-result (dispatch-document-notification state method params)))
+  (let ((doc-result (handle-document-notification state method params)))
     (if doc-result
-        doc-result
+        doc-result  ; Returns (new-state should-exit?)
         ; Then try base handlers
-        (dispatch-notification state method params))))
+        (let ((new-state (dispatch-notification state method params)))
+          (let ((should-exit (state-get new-state "exit")))
+            (list new-state (eq? should-exit #t)))))))
 
 (define (full-dispatch-request state method params id)
-  ; Currently all requests go to base dispatcher
-  ; (Future: add hover, definition, etc.)
-  (dispatch-request state method params id))
+  ; Handle LSP feature requests
+  (if (equal? method "textDocument/hover")
+      (let ((result (handle-hover state params)))
+        (let ((new-state (car result))
+              (hover-result (car (cdr result))))
+          (list new-state (make-response id hover-result))))
+      ; Note: textDocument/definition not enabled due to interpreter performance issues
+      ; All other requests go to base dispatcher
+      (dispatch-request state method params id)))
 
 ; ============================================================================
 ; Message Processing
 ; ============================================================================
-; Due to interpreter bug, we extract values first, then do side effects,
-; then build the final result.
 
-; Helper to write response and return result
-; This minimizes nesting
-(define (send-response-and-return response new-state)
-  (write-lsp-message response)
-  (list new-state #f))
-
-; Process notification - no response to send
+; Process notification - may generate outbound notifications (e.g., diagnostics)
 (define (process-notification state method params)
-  (let ((new-state (full-dispatch-notification state method params)))
-    (let ((should-exit (state-get new-state "exit")))
-      (list new-state (eq? should-exit #t)))))
+  (full-dispatch-notification state method params))
 
 ; Process request - need to send response
 (define (process-request state method params id)
@@ -73,7 +116,7 @@
                 (let ((result (process-request state method params id)))
                   (let ((new-state (car result)))
                     (let ((response (car (cdr result))))
-                      ; Workaround: use inline display instead of function call
+                      ; Write response to stdout
                       (let ((body (json-stringify response)))
                         (display "Content-Length: ")
                         (display (string-length body))

@@ -4,151 +4,6 @@ Bugs encountered in the Kira language while developing the Lisp interpreter.
 
 ---
 
-## [x] Bug 1: Recursive HOF corrupts parameter bindings on second call with new closure
-
-**Status:** Fixed
-
-**Description:** When a recursive higher-order function is called twice, and the second call passes a newly-created closure (inline lambda), the parameter bindings become corrupted during recursion. The error manifests as "cdr: requires non-empty list" even when the list is not empty.
-
-**Minimal reproduction:**
-
-```lisp
-(define (local-foldl f init lst)
-  (if (null? lst)
-      init
-      (local-foldl f (f init (car lst)) (cdr lst))))
-
-(local-foldl + 0 '(1 2 3))                                    ; ✅ returns 6
-(local-foldl (lambda (acc x) (cons x acc)) '() '(1 2 3))      ; ❌ ERROR
-```
-
-Error: `cdr: requires non-empty list` at the `(cdr lst)` call site.
-
----
-
-### Diagnostic Test Results
-
-| Test | Scenario | Result |
-|------|----------|--------|
-| builtin → builtin | `(foldl + ...)` then `(foldl * ...)` | ✅ |
-| builtin → inline lambda | `(foldl + ...)` then `(foldl (lambda ...) ...)` | ❌ |
-| lambda → lambda | Two different inline lambdas | ❌ |
-| same lambda twice | Identical `(lambda (acc x) (+ acc x))` syntax | ❌ |
-| named lambda (define before) | `(define f ...)` before first call | ✅ |
-| named lambda (define after) | `(define f ...)` after first call | ❌ |
-| let-bound lambda | `(let ((f (lambda ...))) (foldl f ...))` | ❌ |
-| lambda → builtin | Lambda first, then builtin | ✅ |
-| single inline lambda | First and only call | ✅ |
-| same named lambda twice | `(foldl my-fn ...)` twice | ✅ |
-| non-recursive HOF | `(define (apply-fn f x y) (f x y))` | ✅ |
-| f not called | Recursive fn that passes f but doesn't call it | ✅ |
-| empty list | Second call with `'()` (no recursion) | ✅ |
-| factory pattern | Fresh function instance per call | ✅ |
-
----
-
-### Key Findings
-
-1. **NOT import-specific** — Bug reproduces with local function definitions
-2. **Requires recursion** — Non-recursive HOFs work correctly
-3. **Requires `f` to be called** — If `f` is passed but not invoked, no bug
-4. **Triggered by NEW closure instances** — Not builtin vs lambda specifically
-5. **Second call triggers it** — First call to a recursive HOF always succeeds
-6. **Order matters** — `lambda→builtin` works; `builtin→lambda` fails
-7. **Same closure instance OK** — Using the same named lambda repeatedly works
-8. **Define-before-first-call workaround** — Lambda must be bound at top-level BEFORE any call to the recursive function
-9. **Let-binding insufficient** — Must be top-level `define`, not `let`
-
----
-
-### Hypothesis for Compiler Team
-
-The bug appears to be in **environment frame management during recursive calls** when the function parameter `f` holds a closure.
-
-**Suspected mechanism:**
-
-1. First call: `(foldl + 0 '(1 2 3))` — `f` binds to builtin `+` (no closure environment)
-2. Recursive calls complete normally, environments cleaned up
-3. Second call: `(foldl (lambda ...) '() '(1 2 3))` — `f` binds to new closure
-4. When `(f init (car lst))` is evaluated, the closure's captured environment is activated
-5. **BUG:** This activation corrupts or shadows the current frame's `lst` binding
-6. The recursive call `(foldl f ... (cdr lst))` evaluates `lst` and gets wrong value
-7. `(cdr lst)` receives stale/wrong value, causing the error
-
-**Evidence supporting this hypothesis:**
-
-- Bug only occurs when `f` is **called** (not just passed)
-- Bug only occurs on **second+ calls** (first call establishes some state)
-- Bug only occurs with **new closure instances** (reusing same closure works)
-- Bug does NOT occur if lambda is defined **before first call** (suggests early definition avoids some environment collision)
-- Let-bound lambdas fail (closure created at call time, like inline)
-- Factory pattern works (fresh function = fresh closure scope)
-
-**Possible root causes to investigate:**
-
-1. **Environment frame reuse** — Recursive calls may reuse frames instead of allocating fresh ones when a closure is involved
-2. **Closure environment merging** — When calling `f`, the closure's environment may be incorrectly merged into the current frame
-3. **Binding shadowing** — The closure's captured bindings may shadow the function's parameter bindings
-4. **Stale environment pointer** — The recursive function may hold a stale pointer to a previous call's environment
-
-**Suggested investigation:**
-
-1. Add debug tracing to `eval_apply` or equivalent to dump environment frames on each recursive call
-2. Compare environment state between:
-   - First call with builtin (works)
-   - Second call with lambda (fails)
-3. Check if `lst` binding exists in closure environment and shadows function parameter
-4. Verify environment frames are properly allocated (not reused) for recursive calls
-
----
-
-### Workarounds
-
-```lisp
-; Workaround 1: Define lambda at top-level BEFORE first call
-(define my-cons (lambda (acc x) (cons x acc)))
-(foldl + 0 '(1 2 3))              ; OK
-(foldl my-cons '() '(1 2 3))      ; OK
-
-; Workaround 2: Call with lambda FIRST
-(foldl (lambda (acc x) (cons x acc)) '() '(1 2 3))  ; OK (first call)
-(foldl + 0 '(1 2 3))                                 ; OK (after lambda)
-
-; Workaround 3: Use explicit recursion instead of HOF
-(define (reverse lst)
-  (define (rev-helper lst acc)
-    (if (null? lst)
-        acc
-        (rev-helper (cdr lst) (cons (car lst) acc))))
-  (rev-helper lst '()))
-```
-
-**Affected code:** `src/stdlib.lisp` uses explicit recursion in several places to avoid this bug.
-
----
-
-### Fix (2026-01-28)
-
-**Root cause:** Multiple locations in the evaluator were threading the environment returned by function calls, which could corrupt the caller's environment when nested function applications were involved.
-
-**Changes to `src/main.ki`:**
-
-1. **Added `LispRecursiveLambda` type** - Stores the function name so `apply` can inject self-reference at call time, enabling proper recursive function calls with lexical scoping.
-
-2. **Fixed `apply` function** - Anonymous lambdas (`LispLambda`) now properly extend their closure environment. Named recursive functions (`LispRecursiveLambda`) inject self-reference into the closure before creating the call environment.
-
-3. **Fixed `eval_if`** - Was using `env2` (returned environment from condition evaluation) for then/else branches. Now uses original `env` to prevent function calls in conditions from corrupting the branch evaluation environment.
-
-4. **Fixed `eval_and` and `eval_or`** - Same pattern: use original environment instead of the environment returned by evaluating subexpressions.
-
-5. **Fixed `eval_list_values`** - Now evaluates all arguments in the SAME original environment, following standard Scheme semantics where arguments don't see side effects from each other.
-
-6. **Fixed `eval_define` (value form)** - Uses original environment instead of the environment returned by evaluating the value expression.
-
-7. **Updated `src/stdlib.lisp`** - Reordered function definitions so that `foldl` and `foldr` are defined before `map` and `filter` which depend on them.
-
----
-
 ## Limitations
 
 ### No variadic functions
@@ -187,3 +42,389 @@ The `import` function resolves paths relative to the current working directory, 
 ```
 
 **Impact:** Tests must be run from the project root directory.
+
+---
+
+## [x] Bug 2: Function parameters lost after user-defined function calls in sequence
+
+**Status:** Fixed
+
+**Description:** When a function body contains a sequence of expressions, calling a **user-defined function** causes subsequent expressions to lose access to function parameters and let-bound variables. The variables become undefined. **Builtin functions do not trigger this bug.**
+
+**Minimal reproduction:**
+
+```lisp
+(define (dummy x)
+  (display "called")
+  '())
+
+(define (helper a b)
+  (dummy a)
+  b)  ; ERROR: Undefined variable: b
+
+(helper "first" "second")
+```
+
+Error: `Undefined variable: b`
+
+The parameter `b` (and `a`) become unavailable after the `(dummy a)` call.
+
+---
+
+### Diagnostic Test Results
+
+| Test | Scenario | Result |
+|------|----------|--------|
+| Single expression body | `(define (f a b) b)` | ✅ |
+| Two expressions, no call | `(define (f a b) a b)` | ✅ |
+| Builtin then return | `(define (f a b) (display a) b)` | ✅ |
+| Arithmetic builtin then return | `(define (f a b) (+ 1 2) b)` | ✅ |
+| **User-defined fn then return** | `(define (f a b) (noop a) b)` | ❌ |
+| Lambda call then return | `(define (f a b) ((lambda (x) x) a) b)` | ❌ |
+| Let without function call | `(let ((x a)) x b)` | ✅ |
+| Let with user-defined call | `(let ((x a)) (noop x) b)` | ❌ |
+| Explicit begin block | `(begin (noop a) b)` | ❌ |
+
+**Key finding:** The bug is triggered specifically by **user-defined function calls** (including lambdas), NOT by builtin function calls.
+
+---
+
+### Observations
+
+- Affects ALL function parameters and let-bound variables
+- Only triggered by **user-defined function calls** (not builtins)
+- Builtins like `display`, `+`, `cons`, etc. do NOT cause parameter loss
+- Lambda calls `((lambda ...) ...)` trigger the bug (they are user-defined)
+- Both implicit sequences and explicit `begin` blocks are affected
+- Related to Bug 1, likely same root cause in environment handling
+
+---
+
+### Hypothesis for Compiler Team
+
+The bug appears to be in **environment handling when returning from user-defined function calls**.
+
+**Suspected mechanism:**
+
+1. Function `helper` is called, creating environment frame with `a="first"`, `b="second"`
+2. First expression `(dummy a)` is evaluated:
+   - `dummy` creates its own environment frame
+   - `dummy` executes and returns
+   - **BUG:** The environment is corrupted or replaced when returning from `dummy`
+3. Second expression `b` is evaluated in the corrupted environment
+4. `b` is not found → "Undefined variable: b"
+
+**Why builtins work but user-defined functions don't:**
+
+Builtins are handled in `apply_builtin()` which likely:
+- Does NOT create a new environment frame
+- Does NOT modify the caller's environment on return
+
+User-defined functions go through `apply()` which likely:
+- Creates a new environment frame for the function body
+- **BUG:** Incorrectly replaces or discards the caller's environment on return
+
+**Where to look in `src/main.ki`:**
+
+1. **`eval_begin` or implicit sequence handling** - How is the environment threaded between expressions?
+2. **`apply` function** - What environment is returned after a user-defined function call?
+3. **Environment threading in sequences** - Is the returned environment from a function call incorrectly used for subsequent expressions?
+
+**The fix for Bug 1 addressed environment threading in several places:**
+- `eval_if` - now uses original env for branches
+- `eval_and` / `eval_or` - now uses original env
+- `eval_list_values` - evaluates args in same original env
+- `eval_define` - uses original env
+
+**Bug 2 fix applied to:**
+- `eval_begin_list` - now checks if expression is a binding form (`define`, `set!`, `defmacro`, `import`) and only uses the returned environment for those. For all other expressions (especially function calls), uses the original environment.
+
+---
+
+### Workaround
+
+Structure code so no variables are referenced after user-defined function calls:
+
+```lisp
+; Pass needed values through the called function
+(define (dummy-and-return x ret)
+  (display "called")
+  ret)
+
+(define (helper a b)
+  (dummy-and-return a b))  ; b is passed as argument, returned by dummy-and-return
+```
+
+---
+
+### Impact
+
+This bug severely limits idiomatic Lisp code. Patterns requiring side effects followed by returning a value are impossible:
+
+```lisp
+; Cannot do this:
+(define (process-and-log data)
+  (log "Processing...")  ; user-defined logging function
+  (transform data))      ; ERROR: data is undefined
+
+; Must restructure as:
+(define (process-and-log data)
+  (log-and-return "Processing..." (transform data)))
+```
+
+**Affected LSP features:**
+- Diagnostics (need to send notifications then return state)
+- Any handler that performs I/O then returns a value
+
+---
+
+### Deep Analysis (2026-01-30)
+
+#### The Bug Pattern: Environment Threading
+
+Bug 2 is a classic interpreter bug involving **environment threading**. In interpreters where `eval` returns both a value AND an environment:
+
+```
+eval(expr, env) → (value, new_env)
+```
+
+The bug occurs when evaluating **sequences** (multiple expressions). The buggy implementation incorrectly threads the returned environment:
+
+```
+; Evaluating (begin (dummy a) b) in func_env where a="first", b="second"
+
+(v1, env1) = eval((dummy a), func_env)
+(v2, env2) = eval(b, env1)  ← BUG: uses env1 instead of func_env
+```
+
+When `(dummy a)` returns, `env1` is the **callee's environment** (or a corrupted version), not `func_env` which contains `a` and `b`. The subsequent lookup of `b` in `env1` fails with "Undefined variable".
+
+#### Why Builtins Don't Trigger This Bug
+
+Builtins are handled differently in `apply_builtin`:
+- They don't create new environment frames
+- They return `(value, original_env)` unchanged
+- Example: `(display a)` returns `(void, func_env)` — environment preserved
+
+User-defined functions in `apply`:
+- Create a new environment frame for parameters
+- **BUG:** Return this new frame instead of preserving caller's env
+- Example: `(dummy a)` returns `(result, dummy_env)` — **wrong env returned**
+
+#### Concrete Example of the Bug
+
+```lisp
+(define (helper a b)
+  (dummy a)   ; Returns (result, dummy_env) where dummy_env has NO 'a' or 'b'
+  b)          ; Evaluated in dummy_env → "Undefined variable: b"
+```
+
+**Execution trace:**
+
+1. `(helper "first" "second")` called
+2. `func_env` created with `{a: "first", b: "second"}`
+3. `(dummy a)` evaluated:
+   - `dummy_env` created with `{x: "first"}` (dummy's parameter)
+   - `dummy` body executes, returns value
+   - **BUG:** Returns `(result, dummy_env)` instead of `(result, func_env)`
+4. `b` evaluated in `dummy_env`
+5. `dummy_env.get("b")` fails → **"Undefined variable: b"**
+
+#### The Fix Pattern
+
+The fix (same pattern used for Bug 1) is to use the **original environment** for all expressions in a sequence, ignoring the returned environment:
+
+**Buggy `eval_begin`:**
+```
+fn eval_begin(exprs, env):
+    current_env = env
+    for expr in exprs:
+        (value, current_env) = eval(expr, current_env)  # BUG: threading env
+    return (value, current_env)
+```
+
+**Fixed `eval_begin`:**
+```
+fn eval_begin(exprs, env):
+    for expr in exprs:
+        (value, _) = eval(expr, env)  # Always use original env
+    return (value, env)               # Return original env
+```
+
+#### Where to Apply the Fix
+
+Based on the diagnostic test results, the fix needs to be applied to:
+
+1. **`eval_begin`** — Explicit `(begin ...)` blocks
+2. **Implicit sequence handling** — Function bodies with multiple expressions
+3. **`let` body evaluation** — After binding, body expressions need original env
+
+The key insight: **Within a single lexical scope, all expressions should see the same environment.** The environment returned by evaluating a subexpression should NOT replace the current scope's environment for sibling expressions.
+
+#### Verification
+
+After applying the fix, these should all pass:
+
+```lisp
+(define (f a b) (noop a) b)           ; Should return b
+((lambda (a b) (noop a) b) 1 2)       ; Should return 2
+(let ((x 1)) (noop x) x)              ; Should return 1
+(begin (noop 1) 2)                    ; Should return 2
+```
+
+---
+
+### Source Code Analysis (for Kira compiler team)
+
+#### The Buggy Code: `src/main.ki:1066-1084`
+
+```kira
+effect fn eval_begin_list(exprs: List[LispValue], env: Env) -> EvalResult {
+    match exprs {
+        Nil => { return EvalOk(LispNil, env) }
+        Cons(last_expr, Nil) => {
+            return eval(last_expr, env)
+        }
+        Cons(first_expr, rest) => {
+            match trampoline(eval(first_expr, env)) {
+                EvalOk(_, new_env) => {
+                    // BUG: Uses new_env instead of env
+                    return eval_begin_list(rest, new_env)
+                }
+                EvalErr(msg, loc) => { return EvalErr(msg, loc) }
+                TailCall(_, _, _) => { return EvalErr("Internal error: trampoline returned TailCall", None) }
+            }
+        }
+    }
+}
+```
+
+**Line 1078 is the bug:** `eval_begin_list(rest, new_env)` should be `eval_begin_list(rest, env)`.
+
+---
+
+#### Why Builtins Work: `src/main.ki:1599-1606`
+
+Builtins like `display` return the **original** `env` unchanged:
+
+```kira
+effect fn builtin_display(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
+    match args {
+        Cons(v, Nil) => {
+            // ... print logic ...
+            return EvalOk(LispNil, env)  // Returns ORIGINAL env
+        }
+        // ...
+    }
+}
+```
+
+When `eval_begin_list` calls a builtin:
+- `trampoline(eval((display a), func_env))` returns `EvalOk(nil, func_env)`
+- `new_env == func_env` — same environment, no problem
+- Next expression evaluates correctly in `func_env`
+
+---
+
+#### Why User-Defined Functions Break: `src/main.ki:1498-1511`
+
+User-defined functions create a **new environment** from their closure:
+
+```kira
+effect fn apply(func: LispValue, args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
+    match func {
+        LispLambda(params, body, closure_env) => {
+            let call_env: Env = env_extend(closure_env)  // New env from CLOSURE, not caller
+            match env_define_all(call_env, params, args) {
+                Ok(bound_env) => {
+                    return TailCall(body, Nil, bound_env)  // Returns callee's env
+                }
+                // ...
+            }
+        }
+        // ...
+    }
+}
+```
+
+When `eval_begin_list` calls a user-defined function:
+- `trampoline(eval((dummy a), func_env))` goes through `apply`
+- `apply` creates `call_env` extending `closure_env` (dummy's closure)
+- After execution, returns `EvalOk(result, call_env)` where `call_env` has only `{x: ...}`
+- `new_env == call_env` — **wrong environment**, missing `a` and `b`
+- Next expression `b` evaluated in `call_env` → "Undefined variable: b"
+
+---
+
+#### The Fix (Applied)
+
+Added `is_binding_form()` helper function and modified `eval_begin_list` to conditionally use the returned environment:
+
+```kira
+// Check if an expression is a binding form that modifies the environment
+fn is_binding_form(expr: LispValue) -> bool {
+    match expr {
+        LispList(Cons(LispSymbol(name, _), _), _) => {
+            return name == "define" or name == "set!" or name == "defmacro" or name == "import"
+        }
+        _ => { return false }
+    }
+}
+
+// In eval_begin_list:
+EvalOk(_, new_env) => {
+    if is_binding_form(first_expr) {
+        return eval_begin_list(rest, new_env)  // Binding forms need new env
+    } else {
+        return eval_begin_list(rest, env)       // Everything else uses original env
+    }
+}
+```
+
+This preserves environment changes from binding forms (`define`, `set!`, `defmacro`, `import`) while discarding environment changes from function calls (which return the callee's unrelated environment).
+
+---
+
+#### Related Code Paths
+
+The same pattern applies to all sequence-like constructs. Here's the current status:
+
+| Location | Function | Status | Notes |
+|----------|----------|--------|-------|
+| `main.ki:1078` | `eval_begin_list` | ✅ Fixed | Uses `is_binding_form()` check to decide when to propagate env |
+| `main.ki:947` | `eval_if` | ✅ Fixed | Uses `_` to discard returned env |
+| `main.ki:1046` | `eval_let` bindings | ✅ Fixed | Uses `_` to discard returned env |
+| `main.ki:1055` | `eval_let` body | ✅ Fixed | Calls `eval_begin_list` which is now fixed |
+| `main.ki:1117` | `eval_and` | ✅ Fixed | Uses `_` to discard returned env |
+| `main.ki:1142` | `eval_or` | ✅ Fixed | Uses `_` to discard returned env |
+
+The fix for `eval_begin_list` is more nuanced: it uses `is_binding_form()` to check if the expression is `define`, `set!`, `defmacro`, or `import`, and only uses the returned environment for those. For all other expressions, it uses the original environment.
+
+---
+
+#### Minimal Test Case
+
+Save as `examples/testing/bug2-test.lisp`:
+
+```lisp
+; Bug 2 test: Function parameters lost after user-defined function calls
+(define (dummy x)
+  (display "dummy called with: ")
+  (display x)
+  (display "\n")
+  '())
+
+(define (helper a b)
+  (dummy a)   ; User-defined function call
+  b)          ; BUG: "Undefined variable: b"
+
+(display "Testing Bug 2...\n")
+(display "Result: ")
+(display (helper "first" "second"))  ; Should print "second"
+(display "\n")
+```
+
+Run with: `kira run src/main.ki run examples/testing/bug2-test.lisp`
+
+**Expected (after fix):** Prints "second"
+**Actual (with bug):** Error "Undefined variable: b"
