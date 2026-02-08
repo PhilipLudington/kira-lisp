@@ -113,8 +113,8 @@ fn lisp_to_string(v: LispValue) -> string {
         LispBool(b) => {
             if b { return "#t" } else { return "#f" }
         }
-        LispInt(n) => { return to_string(n) }
-        LispFloat(n) => { return to_string(n) }
+        LispInt(n) => { return std.int.to_string(n) }
+        LispFloat(n) => { return std.float.to_string(n) }
         LispString(s) => { return "\"" + s + "\"" }
         LispSymbol(s) => { return s }
         LispList(items) => {
@@ -558,7 +558,7 @@ fn builtin_add(args: List[LispValue], env: Env) -> EvalResult {
         match arg {
             LispInt(n) => {
                 if is_float {
-                    sum_float = sum_float + to_float(n)
+                    sum_float = sum_float + std.float.from_int(n)
                 } else {
                     sum_int = sum_int + n
                 }
@@ -566,7 +566,7 @@ fn builtin_add(args: List[LispValue], env: Env) -> EvalResult {
             LispFloat(n) => {
                 if not is_float {
                     is_float = true
-                    sum_float = to_float(sum_int)
+                    sum_float = std.float.from_int(sum_int)
                 }
                 sum_float = sum_float + n
             }
@@ -598,7 +598,7 @@ fn builtin_sub(args: List[LispValue], env: Env) -> EvalResult {
                                 match arg {
                                     LispInt(m) => {
                                         if is_float {
-                                            result_f = result_f - to_float(m)
+                                            result_f = result_f - std.float.from_int(m)
                                         } else {
                                             result = result - m
                                         }
@@ -606,7 +606,7 @@ fn builtin_sub(args: List[LispValue], env: Env) -> EvalResult {
                                     LispFloat(m) => {
                                         if not is_float {
                                             is_float = true
-                                            result_f = to_float(result)
+                                            result_f = std.float.from_int(result)
                                         }
                                         result_f = result_f - m
                                     }
@@ -629,7 +629,7 @@ fn builtin_sub(args: List[LispValue], env: Env) -> EvalResult {
                             var result: f64 = n
                             for arg in rest {
                                 match arg {
-                                    LispInt(m) => { result = result - to_float(m) }
+                                    LispInt(m) => { result = result - std.float.from_int(m) }
                                     LispFloat(m) => { result = result - m }
                                     _ => { return EvalErr("-: expected number") }
                                 }
@@ -653,7 +653,7 @@ fn builtin_mul(args: List[LispValue], env: Env) -> EvalResult {
         match arg {
             LispInt(n) => {
                 if is_float {
-                    product_float = product_float * to_float(n)
+                    product_float = product_float * std.float.from_int(n)
                 } else {
                     product_int = product_int * n
                 }
@@ -661,7 +661,7 @@ fn builtin_mul(args: List[LispValue], env: Env) -> EvalResult {
             LispFloat(n) => {
                 if not is_float {
                     is_float = true
-                    product_float = to_float(product_int)
+                    product_float = std.float.from_int(product_int)
                 }
                 product_float = product_float * n
             }
@@ -682,7 +682,7 @@ fn builtin_div(args: List[LispValue], env: Env) -> EvalResult {
         Cons(first, rest) => {
             match first {
                 LispInt(n) => {
-                    var result: f64 = to_float(n)
+                    var result: f64 = std.float.from_int(n)
                     match rest {
                         Nil => { return EvalOk(LispFloat(1.0 / result), env) }
                         _ => {
@@ -692,7 +692,7 @@ fn builtin_div(args: List[LispValue], env: Env) -> EvalResult {
                                         if m == 0i64 {
                                             return EvalErr("/: division by zero")
                                         }
-                                        result = result / to_float(m)
+                                        result = result / std.float.from_int(m)
                                     }
                                     LispFloat(m) => {
                                         if m == 0.0 {
@@ -718,7 +718,7 @@ fn builtin_div(args: List[LispValue], env: Env) -> EvalResult {
                                         if m == 0i64 {
                                             return EvalErr("/: division by zero")
                                         }
-                                        result = result / to_float(m)
+                                        result = result / std.float.from_int(m)
                                     }
                                     LispFloat(m) => {
                                         if m == 0.0 {
@@ -766,8 +766,8 @@ fn numbers_equal(a: LispValue, b: LispValue) -> bool {
     match (a, b) {
         (LispInt(x), LispInt(y)) => { return x == y }
         (LispFloat(x), LispFloat(y)) => { return x == y }
-        (LispInt(x), LispFloat(y)) => { return to_float(x) == y }
-        (LispFloat(x), LispInt(y)) => { return x == to_float(y) }
+        (LispInt(x), LispFloat(y)) => { return std.float.from_int(x) == y }
+        (LispFloat(x), LispInt(y)) => { return x == std.float.from_int(y) }
         _ => { return false }
     }
 }
@@ -778,8 +778,8 @@ fn builtin_lt(args: List[LispValue], env: Env) -> EvalResult {
             match (a, b) {
                 (LispInt(x), LispInt(y)) => { return EvalOk(LispBool(x < y), env) }
                 (LispFloat(x), LispFloat(y)) => { return EvalOk(LispBool(x < y), env) }
-                (LispInt(x), LispFloat(y)) => { return EvalOk(LispBool(to_float(x) < y), env) }
-                (LispFloat(x), LispInt(y)) => { return EvalOk(LispBool(x < to_float(y)), env) }
+                (LispInt(x), LispFloat(y)) => { return EvalOk(LispBool(std.float.from_int(x) < y), env) }
+                (LispFloat(x), LispInt(y)) => { return EvalOk(LispBool(x < std.float.from_int(y)), env) }
                 _ => { return EvalErr("<: requires numeric arguments") }
             }
         }
@@ -793,8 +793,8 @@ fn builtin_gt(args: List[LispValue], env: Env) -> EvalResult {
             match (a, b) {
                 (LispInt(x), LispInt(y)) => { return EvalOk(LispBool(x > y), env) }
                 (LispFloat(x), LispFloat(y)) => { return EvalOk(LispBool(x > y), env) }
-                (LispInt(x), LispFloat(y)) => { return EvalOk(LispBool(to_float(x) > y), env) }
-                (LispFloat(x), LispInt(y)) => { return EvalOk(LispBool(x > to_float(y)), env) }
+                (LispInt(x), LispFloat(y)) => { return EvalOk(LispBool(std.float.from_int(x) > y), env) }
+                (LispFloat(x), LispInt(y)) => { return EvalOk(LispBool(x > std.float.from_int(y)), env) }
                 _ => { return EvalErr(">: requires numeric arguments") }
             }
         }
@@ -808,8 +808,8 @@ fn builtin_le(args: List[LispValue], env: Env) -> EvalResult {
             match (a, b) {
                 (LispInt(x), LispInt(y)) => { return EvalOk(LispBool(x <= y), env) }
                 (LispFloat(x), LispFloat(y)) => { return EvalOk(LispBool(x <= y), env) }
-                (LispInt(x), LispFloat(y)) => { return EvalOk(LispBool(to_float(x) <= y), env) }
-                (LispFloat(x), LispInt(y)) => { return EvalOk(LispBool(x <= to_float(y)), env) }
+                (LispInt(x), LispFloat(y)) => { return EvalOk(LispBool(std.float.from_int(x) <= y), env) }
+                (LispFloat(x), LispInt(y)) => { return EvalOk(LispBool(x <= std.float.from_int(y)), env) }
                 _ => { return EvalErr("<=: requires numeric arguments") }
             }
         }
@@ -823,8 +823,8 @@ fn builtin_ge(args: List[LispValue], env: Env) -> EvalResult {
             match (a, b) {
                 (LispInt(x), LispInt(y)) => { return EvalOk(LispBool(x >= y), env) }
                 (LispFloat(x), LispFloat(y)) => { return EvalOk(LispBool(x >= y), env) }
-                (LispInt(x), LispFloat(y)) => { return EvalOk(LispBool(to_float(x) >= y), env) }
-                (LispFloat(x), LispInt(y)) => { return EvalOk(LispBool(x >= to_float(y)), env) }
+                (LispInt(x), LispFloat(y)) => { return EvalOk(LispBool(std.float.from_int(x) >= y), env) }
+                (LispFloat(x), LispInt(y)) => { return EvalOk(LispBool(x >= std.float.from_int(y)), env) }
                 _ => { return EvalErr(">=: requires numeric arguments") }
             }
         }
@@ -888,7 +888,7 @@ fn builtin_length(args: List[LispValue], env: Env) -> EvalResult {
     match args {
         Cons(LispList(items), Nil) => {
             let len: i32 = std.list.length(items)
-            return EvalOk(LispInt(to_i64(len)), env)
+            return EvalOk(LispInt(std.int.to_i64(len)), env)
         }
         Cons(LispNil, Nil) => { return EvalOk(LispInt(0i64), env) }
         _ => { return EvalErr("length: requires a list") }
@@ -1031,7 +1031,7 @@ fn builtin_string_length(args: List[LispValue], env: Env) -> EvalResult {
     match args {
         Cons(LispString(s), Nil) => {
             let len: i32 = std.string.length(s)
-            return EvalOk(LispInt(to_i64(len)), env)
+            return EvalOk(LispInt(std.int.to_i64(len)), env)
         }
         _ => { return EvalErr("string-length: requires one string") }
     }
@@ -1039,8 +1039,8 @@ fn builtin_string_length(args: List[LispValue], env: Env) -> EvalResult {
 
 fn builtin_number_to_string(args: List[LispValue], env: Env) -> EvalResult {
     match args {
-        Cons(LispInt(n), Nil) => { return EvalOk(LispString(to_string(n)), env) }
-        Cons(LispFloat(n), Nil) => { return EvalOk(LispString(to_string(n)), env) }
+        Cons(LispInt(n), Nil) => { return EvalOk(LispString(std.int.to_string(n)), env) }
+        Cons(LispFloat(n), Nil) => { return EvalOk(LispString(std.float.to_string(n)), env) }
         _ => { return EvalErr("number->string: requires a number") }
     }
 }
@@ -1049,7 +1049,7 @@ fn builtin_string_to_number(args: List[LispValue], env: Env) -> EvalResult {
     match args {
         Cons(LispString(s), Nil) => {
             match std.string.parse_int(s) {
-                Some(n) => { return EvalOk(LispInt(to_i64(n)), env) }
+                Some(n) => { return EvalOk(LispInt(std.int.to_i64(n)), env) }
                 None => {
                     match std.string.parse_float(s) {
                         Some(f) => { return EvalOk(LispFloat(f), env) }

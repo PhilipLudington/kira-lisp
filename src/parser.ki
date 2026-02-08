@@ -141,8 +141,8 @@ fn lisp_to_string(v: LispValue) -> string {
                 return "#f"
             }
         }
-        LispInt(n) => { return to_string(n) }
-        LispFloat(n) => { return to_string(n) }
+        LispInt(n) => { return std.int.to_string(n) }
+        LispFloat(n) => { return std.float.to_string(n) }
         LispString(s) => { return "\"" + s + "\"" }
         LispSymbol(s) => { return s }
         LispList(items) => {

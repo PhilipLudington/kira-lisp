@@ -163,7 +163,7 @@ fn read_number(lex: Lexer) -> (Lexer, Token) {
         }
     } else {
         match std.string.parse_int(num_str) {
-            Some(n) => { return (current, TokInt(to_i64(n))) }
+            Some(n) => { return (current, TokInt(std.int.to_i64(n))) }
             None => { return (current, TokInt(0i64)) }
         }
     }
@@ -312,8 +312,8 @@ fn token_to_string(tok: Token) -> string {
         TokLParen => { return "LParen" }
         TokRParen => { return "RParen" }
         TokQuote => { return "Quote" }
-        TokInt(n) => { return "Int(" + to_string(n) + ")" }
-        TokFloat(n) => { return "Float(" + to_string(n) + ")" }
+        TokInt(n) => { return "Int(" + std.int.to_string(n) + ")" }
+        TokFloat(n) => { return "Float(" + std.float.to_string(n) + ")" }
         TokString(s) => { return "String(\"" + s + "\")" }
         TokSymbol(s) => { return "Symbol(" + s + ")" }
         TokBool(b) => {

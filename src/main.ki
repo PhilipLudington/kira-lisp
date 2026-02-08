@@ -616,8 +616,8 @@ fn lisp_to_string(v: LispValue) -> string {
     match v {
         LispNil => { return "()" }
         LispBool(b) => { if b { return "#t" } else { return "#f" } }
-        LispInt(n) => { return to_string(n) }
-        LispFloat(n) => { return to_string(n) }
+        LispInt(n) => { return std.int.to_string(n) }
+        LispFloat(n) => { return std.float.to_string(n) }
         LispString(s) => { return "\"" + s + "\"" }
         LispSymbol(s, _) => { return s }
         LispList(items, _) => {
@@ -1784,11 +1784,11 @@ fn builtin_add(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalR
     var is_float: bool = false
     for arg in args {
         match arg {
-            LispInt(n) => { if is_float { sum_float = sum_float + to_float(n) } else { sum_int = sum_int + n } }
+            LispInt(n) => { if is_float { sum_float = sum_float + std.float.from_int(n) } else { sum_int = sum_int + n } }
             LispFloat(n) => {
                 if not is_float {
                     is_float = true
-                    sum_float = to_float(sum_int)
+                    sum_float = std.float.from_int(sum_int)
                 }
                 sum_float = sum_float + n
             }
@@ -1826,7 +1826,7 @@ fn builtin_sub(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalR
                             for arg in rest {
                                 match arg {
                                     LispFloat(m) => { result = result - m }
-                                    LispInt(m) => { result = result - to_float(m) }
+                                    LispInt(m) => { result = result - std.float.from_int(m) }
                                     _ => { return EvalErr("-: expected number", loc) }
                                 }
                             }
@@ -1846,11 +1846,11 @@ fn builtin_mul(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalR
     var is_float: bool = false
     for arg in args {
         match arg {
-            LispInt(n) => { if is_float { prod_float = prod_float * to_float(n) } else { prod_int = prod_int * n } }
+            LispInt(n) => { if is_float { prod_float = prod_float * std.float.from_int(n) } else { prod_int = prod_int * n } }
             LispFloat(n) => {
                 if not is_float {
                     is_float = true
-                    prod_float = to_float(prod_int)
+                    prod_float = std.float.from_int(prod_int)
                 }
                 prod_float = prod_float * n
             }
@@ -2083,8 +2083,8 @@ fn builtin_string_length(args: List[LispValue], loc: Option[SourceLoc], env: Env
 
 fn builtin_num_to_str(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
     match args {
-        Cons(LispInt(n), Nil) => { return EvalOk(LispString(to_string(n)), env) }
-        Cons(LispFloat(n), Nil) => { return EvalOk(LispString(to_string(n)), env) }
+        Cons(LispInt(n), Nil) => { return EvalOk(LispString(std.int.to_string(n)), env) }
+        Cons(LispFloat(n), Nil) => { return EvalOk(LispString(std.float.to_string(n)), env) }
         _ => { return EvalErr("number->string: requires a number", loc) }
     }
 }
@@ -2711,7 +2711,7 @@ type CodegenState = { counter: i64 }
 
 fn codegen_fresh_var(state: CodegenState) -> (CodegenState, string) {
     let new_state: CodegenState = CodegenState { counter: state.counter + 1i64 }
-    return (new_state, "_v" + to_string(state.counter))
+    return (new_state, "_v" + std.int.to_string(state.counter))
 }
 
 fn escape_string(s: string) -> string {
@@ -2779,8 +2779,8 @@ fn codegen_lisp_value(v: LispValue) -> string {
         LispBool(b) => {
             if b { return "LispBool(true)" } else { return "LispBool(false)" }
         }
-        LispInt(n) => { return "LispInt(" + to_string(n) + "i64)" }
-        LispFloat(n) => { return "LispFloat(" + to_string(n) + ")" }
+        LispInt(n) => { return "LispInt(" + std.int.to_string(n) + "i64)" }
+        LispFloat(n) => { return "LispFloat(" + std.float.to_string(n) + ")" }
         LispString(s) => { return "LispString(\"" + escape_string(s) + "\")" }
         LispSymbol(s, _) => { return "LispSymbol(\"" + escape_string(s) + "\")" }
         LispList(items, _) => {
@@ -3098,8 +3098,8 @@ fn lisp_to_string(v: LispValue) -> string {
     match v {
         LispNil => { return \"()\" }
         LispBool(b) => { if b { return \"#t\" } else { return \"#f\" } }
-        LispInt(n) => { return to_string(n) }
-        LispFloat(n) => { return to_string(n) }
+        LispInt(n) => { return std.int.to_string(n) }
+        LispFloat(n) => { return std.float.to_string(n) }
         LispString(s) => { return \"\\\"\" + s + \"\\\"\" }
         LispSymbol(s) => { return s }
         LispList(items) => {
@@ -3377,8 +3377,8 @@ fn rt_string_length(args: List[LispValue]) -> LispValue {
 
 fn rt_number_to_string(args: List[LispValue]) -> LispValue {
     match args {
-        Cons(LispInt(n), Nil) => { return LispString(to_string(n)) }
-        Cons(LispFloat(n), Nil) => { return LispString(to_string(n)) }
+        Cons(LispInt(n), Nil) => { return LispString(std.int.to_string(n)) }
+        Cons(LispFloat(n), Nil) => { return LispString(std.float.to_string(n)) }
         _ => { return LispNil }
     }
 }
@@ -3583,9 +3583,9 @@ effect fn format_error(msg: string, loc: Option[SourceLoc], source: string) -> s
             // File:line:column: error: message
             sb = std.builder.append(sb, l.file)
             sb = std.builder.append(sb, ":")
-            sb = std.builder.append(sb, to_string(l.line))
+            sb = std.builder.append(sb, std.int.to_string(l.line))
             sb = std.builder.append(sb, ":")
-            sb = std.builder.append(sb, to_string(l.column))
+            sb = std.builder.append(sb, std.int.to_string(l.column))
             sb = std.builder.append(sb, ": error: ")
             sb = std.builder.append(sb, msg)
             sb = std.builder.append(sb, "\n")
@@ -3594,7 +3594,7 @@ effect fn format_error(msg: string, loc: Option[SourceLoc], source: string) -> s
             let src_line: string = get_source_line(source, l.line)
             if std.string.length(src_line) > 0 {
                 // Line number and source line
-                let line_prefix: string = "  " + to_string(l.line) + " | "
+                let line_prefix: string = "  " + std.int.to_string(l.line) + " | "
                 sb = std.builder.append(sb, line_prefix)
                 sb = std.builder.append(sb, src_line)
                 sb = std.builder.append(sb, "\n")
