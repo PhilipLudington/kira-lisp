@@ -348,7 +348,7 @@ Server entry point:
 - [x] 3.3 Lifecycle handlers
 - [x] 3.4 Document sync
 - [x] 3.5 Diagnostics
-- [ ] 3.6 Hover
+- [x] 3.6 Hover
 - [ ] 3.7 Go to definition
 - [x] 3.8 LSP main loop
 

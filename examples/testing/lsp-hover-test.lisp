@@ -1,0 +1,47 @@
+; Test LSP hover
+(import "src/lsp/hover.lisp")
+
+(test-reset)
+
+(test-begin "symbol-at-position extracts symbol")
+(let ((text "(define (square x)\n  (* x x))"))
+  (assert-eq "square" (symbol-at-position text 0 10) "finds function name")
+  (assert-eq "x" (symbol-at-position text 1 5) "finds local symbol")
+  (assert-false (symbol-at-position text 1 2) "no symbol on punctuation/space"))
+(test-end)
+
+(test-begin "lookup-symbol-doc resolves builtin")
+(let ((doc (lookup-symbol-doc "car" "(car xs)")))
+  (assert-true (not (equal? doc "car: symbol")) "builtin has specific docs"))
+(test-end)
+
+(test-begin "lookup-symbol-doc resolves indented define")
+(let ((doc (lookup-symbol-doc "square" "  (define (square x) (* x x))\n(square 2)")))
+  (assert-true (not (equal? doc "square: symbol")) "indented define recognized"))
+(test-end)
+
+(test-begin "handle-hover-request returns hover result")
+(let ((state0 (state-set (make-initial-state) "initialized" #t)))
+  (let ((state1 (set-document state0 "file:///hover.lisp" "(define (square x) (* x x))\n(square 2)")))
+    (let ((params (list (list "textDocument" (list (list "uri" "file:///hover.lisp")))
+                        (list "position" (list (list "line" 1) (list "character" 2))))))
+      (let ((result (handle-hover-request state1 params 7)))
+        (let ((response (car (cdr result))))
+          (assert-eq 7 (json-get response "id") "response id preserved")
+          (assert-true (not (json-null? (json-get response "result"))) "hover result present"))))))
+(test-end)
+
+(test-begin "handle-hover-request tolerates malformed params")
+(let ((state (state-set (make-initial-state) "initialized" #t)))
+  (let ((result1 (handle-hover-request state 'null 9)))
+    (let ((response1 (car (cdr result1))))
+      (assert-eq 'null (json-get response1 "result") "null params return null result")))
+  (let ((result2 (handle-hover-request state '(("position" (("line" 0) ("character" 0)))) 10)))
+    (let ((response2 (car (cdr result2))))
+      (assert-eq 'null (json-get response2 "result") "missing textDocument returns null result")))
+  (let ((result3 (handle-hover-request state '(("textDocument" (("uri" "file:///x.lisp")))) 11)))
+    (let ((response3 (car (cdr result3))))
+      (assert-eq 'null (json-get response3 "result") "missing position returns null result"))))
+(test-end)
+
+(test-summary)

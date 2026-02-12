@@ -12,6 +12,7 @@
 (import "src/lsp/handlers.lisp")
 (import "src/lsp/documents.lisp")
 (import "src/lsp/diagnostics.lisp")
+(import "src/lsp/hover.lisp")
 
 (provide lsp-main lsp-loop)
 
@@ -29,9 +30,12 @@
         (dispatch-notification state method params))))
 
 (define (full-dispatch-request state method params id)
-  ; Currently all requests go to base dispatcher
-  ; (Future: add hover, definition, etc.)
-  (dispatch-request state method params id))
+  (if (not (state-initialized? state))
+      (dispatch-request state method params id)
+      (if (equal? method "textDocument/hover")
+          (handle-hover-request state params id)
+          ; Fallback to base dispatcher (shutdown, unknown, etc.)
+          (dispatch-request state method params id))))
 
 ; ============================================================================
 ; Message Processing
