@@ -13,6 +13,7 @@
 (import "src/lsp/documents.lisp")
 (import "src/lsp/diagnostics.lisp")
 (import "src/lsp/hover.lisp")
+(import "src/lsp/definition.lisp")
 
 (provide lsp-main lsp-loop)
 
@@ -34,8 +35,10 @@
       (dispatch-request state method params id)
       (if (equal? method "textDocument/hover")
           (handle-hover-request state params id)
-          ; Fallback to base dispatcher (shutdown, unknown, etc.)
-          (dispatch-request state method params id))))
+          (if (equal? method "textDocument/definition")
+              (handle-definition-request state params id)
+              ; Fallback to base dispatcher (shutdown, unknown, etc.)
+              (dispatch-request state method params id)))))
 
 ; ============================================================================
 ; Message Processing
