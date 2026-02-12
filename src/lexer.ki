@@ -45,7 +45,10 @@ fn current_char(lex: Lexer) -> char {
     if is_at_end(lex) {
         return '\0'
     }
-    return std.string.char_at(lex.input, lex.pos)
+    match std.string.char_at(lex.input, lex.pos) {
+        Some(c) => { return c }
+        None => { return '\0' }
+    }
 }
 
 // Peek at character at offset from current position
@@ -54,7 +57,10 @@ fn peek_char(lex: Lexer, offset: i32) -> char {
     if idx >= lex.length {
         return '\0'
     }
-    return std.string.char_at(lex.input, idx)
+    match std.string.char_at(lex.input, idx) {
+        Some(c) => { return c }
+        None => { return '\0' }
+    }
 }
 
 // Advance the lexer position by one
@@ -154,7 +160,10 @@ fn read_number(lex: Lexer) -> (Lexer, Token) {
         }
     }
 
-    let num_str: string = std.string.substring(lex.input, start, current.pos)
+    let num_str: string = match std.string.substring(lex.input, start, current.pos) {
+        Some(s) => { s }
+        None => { "" }
+    }
 
     if has_dot or has_exp {
         match std.string.parse_float(num_str) {
@@ -212,7 +221,10 @@ fn read_symbol(lex: Lexer) -> (Lexer, Token) {
         current = advance(current)
     }
 
-    let symbol: string = std.string.substring(lex.input, start, current.pos)
+    let symbol: string = match std.string.substring(lex.input, start, current.pos) {
+        Some(s) => { s }
+        None => { "" }
+    }
     return (current, TokSymbol(symbol))
 }
 
