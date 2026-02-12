@@ -2458,6 +2458,7 @@ fn to_ir(expr: LispValue) -> TransformResult {
         LispSymbol(name, _) => { return TransformOk(IRVar(name)) }
         LispList(items, _) => { return to_ir_list(items) }
         LispLambda(_, _, _) => { return TransformErr("Cannot transform runtime lambda to IR") }
+        LispRecursiveLambda(_, _, _, _) => { return TransformErr("Cannot transform runtime lambda to IR") }
         LispBuiltin(_) => { return TransformErr("Cannot transform builtin to IR") }
         LispMacro(_, _, _) => { return TransformErr("Cannot transform macro to IR") }
     }
@@ -2787,6 +2788,7 @@ fn codegen_lisp_value(v: LispValue) -> string {
             return "LispList(" + codegen_list_items(items) + ")"
         }
         LispLambda(_, _, _) => { return "LispNil" }  // Can't serialize closures
+        LispRecursiveLambda(_, _, _, _) => { return "LispNil" }  // Can't serialize closures
         LispBuiltin(n) => { return "LispBuiltin(\"" + n + "\")" }
         LispMacro(_, _, _) => { return "LispNil" }  // Can't serialize macros
     }
@@ -3741,7 +3743,7 @@ fn replace_extension(path: string, new_ext: string) -> string {
     }
 }
 
-fn print_usage() -> void {
+effect fn print_usage() -> void {
     std.io.println("Usage: kira run src/main.ki [options]")
     std.io.println("")
     std.io.println("Options:")
