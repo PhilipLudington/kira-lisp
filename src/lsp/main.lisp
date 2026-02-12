@@ -11,6 +11,7 @@
 (import "src/lsp/protocol.lisp")
 (import "src/lsp/handlers.lisp")
 (import "src/lsp/documents.lisp")
+(import "src/lsp/diagnostics.lisp")
 
 (provide lsp-main lsp-loop)
 
@@ -47,8 +48,9 @@
 ; Process notification - no response to send
 (define (process-notification state method params)
   (let ((new-state (full-dispatch-notification state method params)))
-    (let ((should-exit (state-get new-state "exit")))
-      (list new-state (eq? should-exit #t)))))
+    (let ((_ (maybe-publish-diagnostics new-state method params)))
+      (let ((should-exit (state-get new-state "exit")))
+        (list new-state (eq? should-exit #t))))))
 
 ; Process request - need to send response
 (define (process-request state method params id)

@@ -347,7 +347,7 @@ Server entry point:
 - [x] 3.2 Protocol types
 - [x] 3.3 Lifecycle handlers
 - [x] 3.4 Document sync
-- [ ] 3.5 Diagnostics
+- [x] 3.5 Diagnostics
 - [ ] 3.6 Hover
 - [ ] 3.7 Go to definition
 - [x] 3.8 LSP main loop
