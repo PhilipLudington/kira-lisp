@@ -887,8 +887,8 @@ fn builtin_pair(args: List[LispValue], env: Env) -> EvalResult {
 fn builtin_length(args: List[LispValue], env: Env) -> EvalResult {
     match args {
         Cons(LispList(items), Nil) => {
-            let len: i32 = std.list.length(items)
-            return EvalOk(LispInt(std.int.to_i64(len)), env)
+            let len: i64 = std.list.length(items)
+            return EvalOk(LispInt(len), env)
         }
         Cons(LispNil, Nil) => { return EvalOk(LispInt(0i64), env) }
         _ => { return EvalErr("length: requires a list") }
@@ -1030,8 +1030,8 @@ fn builtin_string_append(args: List[LispValue], env: Env) -> EvalResult {
 fn builtin_string_length(args: List[LispValue], env: Env) -> EvalResult {
     match args {
         Cons(LispString(s), Nil) => {
-            let len: i32 = std.string.length(s)
-            return EvalOk(LispInt(std.int.to_i64(len)), env)
+            let len: i64 = std.string.length(s)
+            return EvalOk(LispInt(len), env)
         }
         _ => { return EvalErr("string-length: requires one string") }
     }

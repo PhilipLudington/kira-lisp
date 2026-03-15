@@ -77,15 +77,15 @@ type EvalResult =
 
 type Lexer = {
     input: string,
-    pos: i32,
-    length: i32,
+    pos: i64,
+    length: i64,
     line: i32,
     column: i32,
     file: string
 }
 
 // Helper to get substring (unwrap Option)
-fn substr(s: string, start: i32, end: i32) -> string {
+fn substr(s: string, start: i64, end: i64) -> string {
     match std.string.substring(s, start, end) {
         Some(result) => { return result }
         None => { return "" }
@@ -93,7 +93,7 @@ fn substr(s: string, start: i32, end: i32) -> string {
 }
 
 // Helper to get char at index (unwrap Option)
-fn char_at(s: string, idx: i32) -> char {
+fn char_at(s: string, idx: i64) -> char {
     match std.string.char_at(s, idx) {
         Some(c) => { return c }
         None => { return '\0' }
@@ -129,8 +129,8 @@ fn current_char(lex: Lexer) -> char {
     return char_at(lex.input, lex.pos)
 }
 
-fn peek_char(lex: Lexer, offset: i32) -> char {
-    let idx: i32 = lex.pos + offset
+fn peek_char(lex: Lexer, offset: i64) -> char {
+    let idx: i64 = lex.pos + offset
     if idx >= lex.length { return '\0' }
     return char_at(lex.input, idx)
 }
@@ -194,7 +194,7 @@ fn is_symbol_char(c: char) -> bool {
 
 fn read_number(lex: Lexer) -> (Lexer, Token) {
     var current: Lexer = lex
-    let start: i32 = current.pos
+    let start: i64 = current.pos
     var has_dot: bool = false
     var has_exp: bool = false
 
@@ -206,7 +206,7 @@ fn read_number(lex: Lexer) -> (Lexer, Token) {
     }
 
     if not is_at_end(current) and current_char(current) == '.' {
-        let next: char = peek_char(current, 1)
+        let next: char = peek_char(current, 1i64)
         if is_digit(next) {
             has_dot = true
             current = advance(current)
@@ -274,7 +274,7 @@ fn read_string(lex: Lexer) -> Result[(Lexer, Token), (string, SourceLoc)] {
 
 fn read_symbol(lex: Lexer) -> (Lexer, Token) {
     var current: Lexer = lex
-    let start: i32 = current.pos
+    let start: i64 = current.pos
     while not is_at_end(current) and is_symbol_char(current_char(current)) {
         current = advance(current)
     }
@@ -286,7 +286,7 @@ fn looking_at_number(lex: Lexer) -> bool {
     let c: char = current_char(lex)
     if is_digit(c) { return true }
     if (c == '+' or c == '-') {
-        let next: char = peek_char(lex, 1)
+        let next: char = peek_char(lex, 1i64)
         return is_digit(next)
     }
     return false
@@ -305,7 +305,7 @@ fn next_token(lex: Lexer) -> Result[(Lexer, Token, SourceLoc), (string, SourceLo
     if c == '\'' { return Ok((advance(current), TokQuote, token_loc)) }
     if c == '`' { return Ok((advance(current), TokQuasiquote, token_loc)) }
     if c == ',' {
-        let next: char = peek_char(current, 1)
+        let next: char = peek_char(current, 1i64)
         if next == '@' {
             return Ok((advance(advance(current)), TokUnquoteSplicing, token_loc))
         }
@@ -319,7 +319,7 @@ fn next_token(lex: Lexer) -> Result[(Lexer, Token, SourceLoc), (string, SourceLo
     }
 
     if c == '#' {
-        let next: char = peek_char(current, 1)
+        let next: char = peek_char(current, 1i64)
         if next == 't' { return Ok((advance(advance(current)), TokBool(true), token_loc)) }
         if next == 'f' { return Ok((advance(advance(current)), TokBool(false), token_loc)) }
         return Err(("Invalid # literal", token_loc))
@@ -2112,8 +2112,8 @@ fn builtin_string_ref(args: List[LispValue], loc: Option[SourceLoc], env: Env) -
             if idx < 0i64 {
                 return EvalOk(LispBool(false), env)
             }
-            let idx_i32: i32 = idx
-            match std.string.char_at(s, idx_i32) {
+            let idx_i64: i64 = idx
+            match std.string.char_at(s, idx_i64) {
                 Some(c) => {
                     var sb: StringBuilder = std.builder.new()
                     sb = std.builder.append_char(sb, c)
@@ -2132,19 +2132,19 @@ fn builtin_substring(args: List[LispValue], loc: Option[SourceLoc], env: Env) ->
             if start < 0i64 {
                 return EvalOk(LispBool(false), env)
             }
-            let len: i32 = std.string.length(s)
-            let start_i32: i32 = start
-            var end_i32: i32 = end
-            if start_i32 > len {
+            let len: i64 = std.string.length(s)
+            let start_i64: i64 = start
+            var end_i64: i64 = end
+            if start_i64 > len {
                 return EvalOk(LispBool(false), env)
             }
-            if end_i32 > len {
-                end_i32 = len
+            if end_i64 > len {
+                end_i64 = len
             }
-            if start_i32 > end_i32 {
+            if start_i64 > end_i64 {
                 return EvalOk(LispBool(false), env)
             }
-            match std.string.substring(s, start_i32, end_i32) {
+            match std.string.substring(s, start_i64, end_i64) {
                 Some(sub) => { return EvalOk(LispString(sub), env) }
                 None => { return EvalOk(LispBool(false), env) }
             }
@@ -2196,11 +2196,11 @@ fn builtin_list_to_string(args: List[LispValue], loc: Option[SourceLoc], env: En
 fn builtin_char_to_integer(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
     match args {
         Cons(LispString(s), Nil) => {
-            let len: i32 = std.string.length(s)
-            if len != 1i32 {
+            let len: i64 = std.string.length(s)
+            if len != 1i64 {
                 return EvalOk(LispBool(false), env)
             }
-            match std.string.char_at(s, 0i32) {
+            match std.string.char_at(s, 0i64) {
                 Some(c) => { return EvalOk(LispInt(std.char.to_i32(c)), env) }
                 None => { return EvalOk(LispBool(false), env) }
             }
@@ -2212,8 +2212,8 @@ fn builtin_char_to_integer(args: List[LispValue], loc: Option[SourceLoc], env: E
 fn builtin_integer_to_char(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
     match args {
         Cons(LispInt(n), Nil) => {
-            let n_i32: i32 = n
-            match std.char.from_i32(n_i32) {
+            let n_i64: i64 = n
+            match std.char.from_i32(n_i64) {
                 Some(c) => {
                     var sb: StringBuilder = std.builder.new()
                     sb = std.builder.append_char(sb, c)
@@ -2229,15 +2229,15 @@ fn builtin_integer_to_char(args: List[LispValue], loc: Option[SourceLoc], env: E
 fn builtin_string_split(args: List[LispValue], loc: Option[SourceLoc], env: Env) -> EvalResult {
     match args {
         Cons(LispString(s), Cons(LispString(delim), Nil)) => {
-            let slen: i32 = std.string.length(s)
-            let dlen: i32 = std.string.length(delim)
+            let slen: i64 = std.string.length(s)
+            let dlen: i64 = std.string.length(delim)
 
-            if slen == 0i32 {
+            if slen == 0i64 {
                 return EvalOk(LispList(Cons(LispString(""), Nil), None), env)
             }
 
             // Empty delimiter: split into individual characters
-            if dlen == 0i32 {
+            if dlen == 0i64 {
                 var result: List[LispValue] = Nil
                 for c in std.string.chars(s) {
                     var sb: StringBuilder = std.builder.new()
@@ -2249,8 +2249,8 @@ fn builtin_string_split(args: List[LispValue], loc: Option[SourceLoc], env: Env)
 
             // Normal split
             var result: List[LispValue] = Nil
-            var start: i32 = 0i32
-            var i: i32 = 0i32
+            var start: i64 = 0i64
+            var i: i64 = 0i64
 
             loop {
                 if i > slen - dlen {
@@ -2266,10 +2266,10 @@ fn builtin_string_split(args: List[LispValue], loc: Option[SourceLoc], env: Env)
                             start = i + dlen
                             i = start
                         } else {
-                            i = i + 1i32
+                            i = i + 1i64
                         }
                     }
-                    None => { i = i + 1i32 }
+                    None => { i = i + 1i64 }
                 }
             }
 
@@ -2717,8 +2717,8 @@ fn codegen_fresh_var(state: CodegenState) -> (CodegenState, string) {
 
 fn escape_string(s: string) -> string {
     var sb: StringBuilder = std.builder.new()
-    let len: i32 = std.string.length(s)
-    var i: i32 = 0
+    let len: i64 = std.string.length(s)
+    var i: i64 = 0i64
     while i < len {
         let c: char = char_at(s, i)
         if c == '\n' {
@@ -2742,8 +2742,8 @@ fn escape_string(s: string) -> string {
 // Convert a Kira identifier to a valid Kira identifier
 fn mangle_name(name: string) -> string {
     var sb: StringBuilder = std.builder.new()
-    let len: i32 = std.string.length(name)
-    var i: i32 = 0
+    let len: i64 = std.string.length(name)
+    var i: i64 = 0i64
     while i < len {
         let c: char = char_at(name, i)
         if c == '-' {
@@ -3549,10 +3549,10 @@ effect fn compile_file(input_path: string, output_path: string) -> void {
 
 // Get a line from source by line number (1-indexed)
 fn get_source_line(source: string, line_num: i32) -> string {
-    let len: i32 = std.string.length(source)
+    let len: i64 = std.string.length(source)
     var current_line: i32 = 1
-    var line_start: i32 = 0
-    var i: i32 = 0
+    var line_start: i64 = 0i64
+    var i: i64 = 0i64
 
     // Find start of the requested line
     while i < len and current_line < line_num {
@@ -3568,7 +3568,7 @@ fn get_source_line(source: string, line_num: i32) -> string {
     }
 
     // Find end of line
-    var line_end: i32 = line_start
+    var line_end: i64 = line_start
     while line_end < len and char_at(source, line_end) != '\n' {
         line_end = line_end + 1
     }
@@ -3602,8 +3602,8 @@ effect fn format_error(msg: string, loc: Option[SourceLoc], source: string) -> s
                 sb = std.builder.append(sb, "\n")
 
                 // Caret line
-                let prefix_len: i32 = std.string.length(line_prefix)
-                var j: i32 = 0
+                let prefix_len: i64 = std.string.length(line_prefix)
+                var j: i64 = 0i64
                 while j < prefix_len {
                     sb = std.builder.append(sb, " ")
                     j = j + 1
@@ -3723,9 +3723,9 @@ effect fn run_file(path: string) -> void {
 
 fn replace_extension(path: string, new_ext: string) -> string {
     // Find the last '.' in the path
-    let len: i32 = std.string.length(path)
-    var dot_pos: i32 = -1
-    var i: i32 = len - 1
+    let len: i64 = std.string.length(path)
+    var dot_pos: i64 = -1i64
+    var i: i64 = len - 1
     while i >= 0 {
         if char_at(path, i) == '.' {
             dot_pos = i
@@ -3737,7 +3737,7 @@ fn replace_extension(path: string, new_ext: string) -> string {
         i = i - 1
     }
     if dot_pos > 0 {
-        return substr(path, 0, dot_pos) + new_ext
+        return substr(path, 0i64, dot_pos) + new_ext
     } else {
         return path + new_ext
     }
